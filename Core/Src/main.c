@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "sensors.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -96,11 +97,72 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
+      // Configurar o LDR (0% a 100%)
+      sensor_ldr->valor = 0.0;
+      sensor_ldr->minimo = 0.0;
+      sensor_ldr->maximo = 100.0;
+      sensor_ldr->nivel_alarma = 50.0;
+      sensor_ldr->activated = 0;
+      sensor_ldr->time_activation = 0;
+      sensor_ldr->value_flashing = 0;
+      sensor_ldr->flashing_last_time_activation = 0;
+
+      // Configurar o NTC (25ºC a 30ºC)
+      sensor_ntc->valor = 0.0;
+      sensor_ntc->minimo = 25.0;
+      sensor_ntc->maximo = 30.0;
+      sensor_ntc->nivel_alarma = 28.0;
+      sensor_ntc->activated = 0;
+      sensor_ntc->time_activation = 0;
+      sensor_ntc->value_flashing = 0;
+      sensor_ntc->flashing_last_time_activation = 0;
+  }
+
+  void Task_HW(void *pvParameters) {
+
+	  struct sensor_t sensor_ldr;
+	  struct sensor_t sensor_ntc;
+      init_sensores(sensor_ldr, sensor_ntc);
+      bool sensorSelector = false;  // false = LDR, true = NTC
+
+      while (1) {
+
+          // 1. READ ALL 3 ANALOG CHANNELS (LDR, NTC, POT)
+          //    - Switch ADC channel, start conversion, poll, get value
+          //    - Convert raw ADC → % for LDR (0–100%)
+          //    - Convert raw ADC → °C for NTC (using BETA formula)
+          //    - Convert raw ADC → 0.0–1.0 for potentiometer
+
+          // 2. READ BUTTONS (with debounce)
+          //    - BTN_IZQ: toggle sensorSelector (LDR <-> NTC)
+          //    - BTN_DER: if alarm active → stop buzzer, record stop time
+
+          // 3. UPDATE ALARM LEVEL
+          //    - If potentiometer changed since last read:
+          //        active sensor's nivel_alarma = map(pot, min, max)
+
+          // 4. CHECK ALARM CONDITION
+          //    - If sensor.valor > sensor.nivel_alarma AND sensor not already activated:
+          //        activate buzzer, set sensor.activated=1, record time_activation
+          //    - Re-arm logic: if 10s have passed since deactivation → allow new alarm
+
+          // 5. UPDATE LED DISPLAY
+          //    - Show selected sensor value as bar (LEDs 1–8 gradually)
+          //    - Flash the LED corresponding to alarm level (5–10 Hz)
+
+          vTaskDelay(50 / portTICK_RATE_MS);  // 20 Hz loop
+      }
+  }
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
     /* USER CODE END WHILE */
+
+
+
 
     /* USER CODE BEGIN 3 */
   }
