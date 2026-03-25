@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "sensors.h"
+#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -97,7 +98,7 @@ int main(void)
 
   /* USER CODE END 2 */
 
-  void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
+ /* void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
       // Configurar o LDR (0% a 100%)
       sensor_ldr->valor = 0.0;
       sensor_ldr->minimo = 0.0;
@@ -117,9 +118,38 @@ int main(void)
       sensor_ntc->time_activation = 0;
       sensor_ntc->value_flashing = 0;
       sensor_ntc->flashing_last_time_activation = 0;
+  }*/
+
+  void print_state_captors(){
+
+	  // Structure de configuration locale pour changer de canal ADC
+	  ADC_ChannelConfTypeDef sConfig = {0};
+
+	  // Configuration commune pour toutes les lectures
+	  sConfig.Rank = 1;
+	  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+
+
+	  while(1){
+		  sConfig.Channel = ADC_CHANNEL_4;
+		  HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+		  HAL_ADC_Start(&hadc1);
+		  HAL_ADC_PollForConversion(&hadc1, 10000);
+		  printf("Valor of the pot is %ld \n",HAL_ADC_GetValue(&hadc1));
+
+
+		  sConfig.Channel = ADC_CHANNEL_0;
+		  HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+		  HAL_ADC_Start(&hadc1);
+		  HAL_ADC_PollForConversion(&hadc1, 10000);
+		  printf("Valor of the ldr is %ld \n",HAL_ADC_GetValue(&hadc1));
+
+
+		  HAL_Delay(500);
+	  }
   }
 
-  void Task_HW(void *pvParameters) {
+ /* void Task_HW(void *pvParameters) {
 
 	  struct sensor_t sensor_ldr;
 	  struct sensor_t sensor_ntc;
@@ -153,15 +183,16 @@ int main(void)
 
           vTaskDelay(50 / portTICK_RATE_MS);  // 20 Hz loop
       }
-  }
+  }*/
+  printf("hello world \n");
+  print_state_captors();
+
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
     /* USER CODE END WHILE */
-
-
 
 
     /* USER CODE BEGIN 3 */
@@ -363,7 +394,13 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+int _write(int file, char *ptr, int len){
+    int DataIdx;
+    for (DataIdx = 0; DataIdx < len; DataIdx++){
+   	 HAL_UART_Transmit(&huart2, (uint8_t*)ptr++,1,1000);
+    }
+    return len;
+}
 /* USER CODE END 4 */
 
 /**
@@ -396,4 +433,6 @@ void assert_failed(uint8_t *file, uint32_t line)
      ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
+
+
 #endif /* USE_FULL_ASSERT */
