@@ -144,6 +144,12 @@ int main(void)
 		  HAL_ADC_PollForConversion(&hadc1, 10000);
 		  printf("Valor of the ldr is %ld \n",HAL_ADC_GetValue(&hadc1));
 
+		  sConfig.Channel = ADC_CHANNEL_1;
+		  HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+		  HAL_ADC_Start(&hadc1);
+		  HAL_ADC_PollForConversion(&hadc1, 10000);
+		  printf("Valor of the ntc is %ld \n",HAL_ADC_GetValue(&hadc1));
+
 
 		  HAL_Delay(500);
 	  }
