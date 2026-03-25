@@ -20,6 +20,7 @@
 #include "main.h"
 #include "sensors.h"
 #include <stdio.h>
+#include "FreeRTOS.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -98,27 +99,37 @@ int main(void)
 
   /* USER CODE END 2 */
 
- /* void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
-      // Configurar o LDR (0% a 100%)
-      sensor_ldr->valor = 0.0;
-      sensor_ldr->minimo = 0.0;
-      sensor_ldr->maximo = 100.0;
-      sensor_ldr->nivel_alarma = 50.0;
-      sensor_ldr->activated = 0;
-      sensor_ldr->time_activation = 0;
-      sensor_ldr->value_flashing = 0;
-      sensor_ldr->flashing_last_time_activation = 0;
+ void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc, struct sensor_t * sensor_pot){
+	// Configurar o LDR (0% a 100%)
+	sensor_ldr->valor = 0.0;
+	sensor_ldr->minimo = 0.0;
+	sensor_ldr->maximo = 100.0;
+	sensor_ldr->nivel_alarma = 50.0;
+	sensor_ldr->activated = 0;
+	sensor_ldr->time_activation = 0;
+	sensor_ldr->value_flashing = 0;
+	sensor_ldr->flashing_last_time_activation = 0;
 
-      // Configurar o NTC (25ºC a 30ºC)
-      sensor_ntc->valor = 0.0;
-      sensor_ntc->minimo = 25.0;
-      sensor_ntc->maximo = 30.0;
-      sensor_ntc->nivel_alarma = 28.0;
-      sensor_ntc->activated = 0;
-      sensor_ntc->time_activation = 0;
-      sensor_ntc->value_flashing = 0;
-      sensor_ntc->flashing_last_time_activation = 0;
-  }*/
+	// Configurar o NTC (25ºC a 30ºC)
+	sensor_ntc->valor = 0.0;
+	sensor_ntc->minimo = 25.0;
+	sensor_ntc->maximo = 30.0;
+	sensor_ntc->nivel_alarma = 28.0;
+	sensor_ntc->activated = 0;
+	sensor_ntc->time_activation = 0;
+	sensor_ntc->value_flashing = 0;
+	sensor_ntc->flashing_last_time_activation = 0;
+
+	// Configurar o POT (0% to 100%)
+	sensor_ntc->valor = 0.0;
+	sensor_ntc->minimo = 0;
+	sensor_ntc->maximo = 100;
+	sensor_ntc->nivel_alarma = 50;
+	sensor_ntc->activated = 0;
+	sensor_ntc->time_activation = 0;
+	sensor_ntc->value_flashing = 0;
+	sensor_ntc->flashing_last_time_activation = 0;
+ }
 
   void print_state_captors(){
 
@@ -137,7 +148,6 @@ int main(void)
 		  HAL_ADC_PollForConversion(&hadc1, 10000);
 		  printf("Valor of the pot is %ld \n",HAL_ADC_GetValue(&hadc1));
 
-
 		  sConfig.Channel = ADC_CHANNEL_0;
 		  HAL_ADC_ConfigChannel(&hadc1, &sConfig);
 		  HAL_ADC_Start(&hadc1);
@@ -151,7 +161,7 @@ int main(void)
 		  printf("Valor of the ntc is %ld \n",HAL_ADC_GetValue(&hadc1));
 
 
-		  HAL_Delay(500);
+		  vTaskDelay(50 / portTICK_RATE_MS);
 	  }
   }
 
@@ -190,6 +200,12 @@ int main(void)
           vTaskDelay(50 / portTICK_RATE_MS);  // 20 Hz loop
       }
   }*/
+  struct sensor_t sensor_ldr;
+  struct sensor_t sensor_ntc;
+  struct sensor_t sensor_pot;
+
+  init_sensores(&sensor_ldr, &sensor_ntc,&sensor_pot);
+
   printf("hello world \n");
   print_state_captors();
 
