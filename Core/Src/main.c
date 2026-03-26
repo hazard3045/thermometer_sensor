@@ -68,7 +68,19 @@ const osThreadAttr_t Task_HW_attributes = {
   .stack_size = 2048 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for myTask_Out */
+osThreadId_t myTask_OutHandle;
+const osThreadAttr_t myTask_Out_attributes = {
+  .name = "myTask_Out",
+  .stack_size = 2048 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* USER CODE BEGIN PV */
+bool button_pressed_left = false; // false for off and true for on, set to true in inputs tasks and off in the outputs tasks
+bool button_pressed_right = false;
+
+int interface = 0; // which sensor is shown, 0 for temperature, 1 for light
+bool setting_up = false; //are setting up the alarm or not, 0 for not, 1 for yes
 
 /* USER CODE END PV */
 
@@ -79,6 +91,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 void StartDefaultTask(void *argument);
 void StartTask_HW(void *argument);
+void StartTask_Out(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -148,6 +161,9 @@ int main(void)
 
   /* creation of Task_HW */
   Task_HWHandle = osThreadNew(StartTask_HW, NULL, &Task_HW_attributes);
+
+  /* creation of myTask_Out */
+  myTask_OutHandle = osThreadNew(StartTask_Out, NULL, &myTask_Out_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -458,6 +474,9 @@ void StartTask_HW(void *argument)
       HAL_ADC_PollForConversion(&hadc1, 10000);
       uint32_t ldr_raw = HAL_ADC_GetValue(&hadc1);
       sensor_ldr.valor = (ldr_raw / 4095.0f) * 100.0f; // %
+      if (sensor_ldr.valor > sensor_ldr.nivel_alarma){
+
+      }
 
       // 4. Lecture NTC (ADC_CHANNEL_1)
       sConfig.Channel = ADC_CHANNEL_1;
@@ -470,7 +489,7 @@ void StartTask_HW(void *argument)
              	- 10000.0) / R25) + BETA / T25) - 273.18;
 
       // 5. Affichage sur le port série (PuTTY)
-      printf("LDR: %d%% | NTC: %d C | POT: %d \r\n", sensor_ldr.valor, sensor_ntc.valor, pot_value);
+      printf("LDR: %d%% | NTC: %d C | POT: %d \r\n", (int) sensor_ldr.valor, (int) sensor_ntc.valor,(int) (pot_value*100));
 
       // 6. Pause de la tâche de 50 millisecondes
       osDelay(50);
@@ -478,6 +497,23 @@ void StartTask_HW(void *argument)
   /* USER CODE END StartTask_HW */
 }
 
+/* USER CODE BEGIN Header_StartTask_Out */
+/**
+* @brief Function implementing the myTask_Out thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask_Out */
+void StartTask_Out(void *argument)
+{
+  /* USER CODE BEGIN StartTask_Out */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END StartTask_Out */
+}
 
 /**
   * @brief  Period elapsed callback in non blocking mode
