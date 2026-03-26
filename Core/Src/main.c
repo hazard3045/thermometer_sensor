@@ -65,14 +65,14 @@ const osThreadAttr_t defaultTask_attributes = {
 osThreadId_t Task_HWHandle;
 const osThreadAttr_t Task_HW_attributes = {
   .name = "Task_HW",
-  .stack_size = 2048 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
-/* Definitions for myTask_Out */
-osThreadId_t myTask_OutHandle;
-const osThreadAttr_t myTask_Out_attributes = {
-  .name = "myTask_Out",
-  .stack_size = 2048 * 4,
+/* Definitions for myTask_Render */
+osThreadId_t myTask_RenderHandle;
+const osThreadAttr_t myTask_Render_attributes = {
+  .name = "myTask_Render",
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* USER CODE BEGIN PV */
@@ -81,6 +81,10 @@ bool button_pressed_right = false;
 
 int interface = 0; // which sensor is shown, 0 for temperature, 1 for light
 bool setting_up = false; //are setting up the alarm or not, 0 for not, 1 for yes
+
+uint16_t leds[] = {LED1_Pin,LED2_Pin,LED3_Pin,LED4_Pin,LED5_Pin,LED6_Pin,LED7_Pin,LED8_Pin};
+
+GPIO_TypeDef* leds_ports[] = {GPIOB, GPIOB, GPIOA, GPIOB, GPIOB, GPIOA, GPIOB, GPIOA};
 
 /* USER CODE END PV */
 
@@ -91,7 +95,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 void StartDefaultTask(void *argument);
 void StartTask_HW(void *argument);
-void StartTask_Out(void *argument);
+void StartTask_Render(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -162,8 +166,8 @@ int main(void)
   /* creation of Task_HW */
   Task_HWHandle = osThreadNew(StartTask_HW, NULL, &Task_HW_attributes);
 
-  /* creation of myTask_Out */
-  myTask_OutHandle = osThreadNew(StartTask_Out, NULL, &myTask_Out_attributes);
+  /* creation of myTask_Render */
+  myTask_RenderHandle = osThreadNew(StartTask_Render, NULL, &myTask_Render_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -414,6 +418,22 @@ void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
 
 }
 
+void render_leds(int number_leds, int led_alarm,long int last_blink){
+	for (int i =0;i<8;i++){
+		if (i != led_alarm){
+			if (i<number_leds){
+				HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_SET);
+			}
+			else {
+				HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_RESET);
+			}
+		}
+	}
+	if(xTaskGetTickCount()- last_blink > 1000){
+		last_blink = xTaskGetTickCount();
+		HAL_GPIO_TogglePin(leds_ports[led_alarm], leds[led_alarm]);
+	}
+}
 
 /* USER CODE END 4 */
 
@@ -497,22 +517,30 @@ void StartTask_HW(void *argument)
   /* USER CODE END StartTask_HW */
 }
 
-/* USER CODE BEGIN Header_StartTask_Out */
+/* USER CODE BEGIN Header_StartTask_Render */
 /**
-* @brief Function implementing the myTask_Out thread.
+* @brief Function implementing the myTask_Render thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartTask_Out */
-void StartTask_Out(void *argument)
+/* USER CODE END Header_StartTask_Render */
+void StartTask_Render(void *argument)
 {
-  /* USER CODE BEGIN StartTask_Out */
+  /* USER CODE BEGIN StartTask_Render */
+
+	long int last_blinking =0;
+	int nb_leds = 0;
+	int led_alarm = 0;
+
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+
+	render_leds(nb_leds,led_alarm,last_blinking);
+
+    osDelay(20);
   }
-  /* USER CODE END StartTask_Out */
+  /* USER CODE END StartTask_Render */
 }
 
 /**
