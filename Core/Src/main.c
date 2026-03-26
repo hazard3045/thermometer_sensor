@@ -20,7 +20,6 @@
 #include "main.h"
 #include "cmsis_os.h"
 
-
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "sensors.h"
@@ -36,18 +35,18 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
 #define R25	10000.0
 #define T25	298.15
 #define BETA   3900
 #define HIGH_PRIORITY (( configMAX_PRIORITIES - 1 )>>1)+1
 #define NORMAL_PRIORITY (( configMAX_PRIORITIES - 1 )>>1)
 #define LOW_PRIORITY (( configMAX_PRIORITIES - 1 )>>1)-1
-
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -62,6 +61,13 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for Task_HW */
+osThreadId_t Task_HWHandle;
+const osThreadAttr_t Task_HW_attributes = {
+  .name = "Task_HW",
+  .stack_size = 2048 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -72,6 +78,7 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 void StartDefaultTask(void *argument);
+void StartTask_HW(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -139,6 +146,9 @@ int main(void)
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
+  /* creation of Task_HW */
+  Task_HWHandle = osThreadNew(StartTask_HW, NULL, &Task_HW_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -149,151 +159,6 @@ int main(void)
 
   /* Start scheduler */
   osKernelStart();
-
-  void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
- 	// Configurar o LDR (0% a 100%)
- 	sensor_ldr->valor = 0.0;
- 	sensor_ldr->minimo = 0.0;
- 	sensor_ldr->maximo = 100.0;
- 	sensor_ldr->nivel_alarma = 50.0;
- 	sensor_ldr->activated = 0;
- 	sensor_ldr->time_activation = 0;
- 	sensor_ldr->value_flashing = 0;
- 	sensor_ldr->flashing_last_time_activation = 0;
-
- 	// Configurar o NTC (25ºC a 30ºC)
- 	sensor_ntc->valor = 0.0;
- 	sensor_ntc->minimo = 25.0;
- 	sensor_ntc->maximo = 30.0;
- 	sensor_ntc->nivel_alarma = 28.0;
- 	sensor_ntc->activated = 0;
- 	sensor_ntc->time_activation = 0;
- 	sensor_ntc->value_flashing = 0;
- 	sensor_ntc->flashing_last_time_activation = 0;
-
-  }
-
-/*   void print_state_captors(){
-
- 	  // Structure de configuration locale pour changer de canal ADC
- 	  ADC_ChannelConfTypeDef sConfig = {0};
-
- 	  // Configuration commune pour toutes les lectures
- 	  sConfig.Rank = 1;
- 	  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
-
-
- 	  while(1){
- 		  sConfig.Channel = ADC_CHANNEL_4;
- 		  HAL_ADC_ConfigChannel(&hadc1, &sConfig);
- 		  HAL_ADC_Start(&hadc1);
- 		  HAL_ADC_PollForConversion(&hadc1, 10000);
- 		  printf("Valor of the pot is %ld \n",HAL_ADC_GetValue(&hadc1));
-
- 		  sConfig.Channel = ADC_CHANNEL_0;
- 		  HAL_ADC_ConfigChannel(&hadc1, &sConfig);
- 		  HAL_ADC_Start(&hadc1);
- 		  HAL_ADC_PollForConversion(&hadc1, 10000);
- 		  printf("Valor of the ldr is %ld \n",HAL_ADC_GetValue(&hadc1));
-
- 		  sConfig.Channel = ADC_CHANNEL_1;
- 		  HAL_ADC_ConfigChannel(&hadc1, &sConfig);
- 		  HAL_ADC_Start(&hadc1);
- 		  HAL_ADC_PollForConversion(&hadc1, 10000);
- 		  printf("Valor of the ntc is %ld \n",HAL_ADC_GetValue(&hadc1));
-
-
- 		  vTaskDelay(50 / portTICK_RATE_MS);
- 	  }
-   }*/
-
-  void show_value_on_leds(float value, float min, float max) {
-      GPIO_TypeDef* led_ports[8] = {LED1_GPIO_Port, LED2_GPIO_Port, LED3_GPIO_Port, LED4_GPIO_Port, LED5_GPIO_Port, LED6_GPIO_Port, LED7_GPIO_Port, LED8_GPIO_Port};
-      uint16_t led_pins[8] = {LED1_Pin, LED2_Pin, LED3_Pin, LED4_Pin, LED5_Pin, LED6_Pin, LED7_Pin, LED8_Pin};
-      int n_led = 8;
-      int leds_on = (int)(((value - min) / (max - min)) * n_led + 0.5f);
-      if (leds_on < 0) leds_on = 0;
-      if (leds_on > n_led) leds_on = n_led;
-      for (int i = 0; i < n_led; ++i) {
-          if (i < leds_on)
-              HAL_GPIO_WritePin(led_ports[i], led_pins[i], GPIO_PIN_SET);
-          else
-              HAL_GPIO_WritePin(led_ports[i], led_pins[i], GPIO_PIN_RESET);
-      }
-  }
-
-  // Funzione per lampeggiare il LED corrispondente al livello di allarme
-  void flash_alarm_led(float nivel_alarma, float min, float max, int tick) {
-      GPIO_TypeDef* led_ports[8] = {LED1_GPIO_Port, LED2_GPIO_Port, LED3_GPIO_Port, LED4_GPIO_Port, LED5_GPIO_Port, LED6_GPIO_Port, LED7_GPIO_Port, LED8_GPIO_Port};
-      uint16_t led_pins[8] = {LED1_Pin, LED2_Pin, LED3_Pin, LED4_Pin, LED5_Pin, LED6_Pin, LED7_Pin, LED8_Pin};
-      int n_led = 8;
-      int led_idx = (int)(((nivel_alarma - min) / (max - min)) * n_led);
-      if (led_idx < 0) led_idx = 0;
-      if (led_idx >= n_led) led_idx = n_led - 1;
-      HAL_GPIO_WritePin(led_ports[led_idx], led_pins[led_idx], (tick % 2) ? GPIO_PIN_RESET : GPIO_PIN_SET);
-  }
-
-   void Task_HW(void *pvParameters) {
-       struct sensor_t sensor_ldr;
-       struct sensor_t sensor_ntc;
-       float pot_value = 0.0f;
-       int tick = 0;
-       int sensorSelector = 0; // 0 = LDR, 1 = NTC (puoi cambiare con pulsante)
-       init_sensores(&sensor_ldr, &sensor_ntc);
-       ADC_ChannelConfTypeDef sConfig = {0};
-       sConfig.Rank = 1;
-       sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
-
-       while (1) {
-           // Lettura potenziometro (ADC_CHANNEL_4)
-           sConfig.Channel = ADC_CHANNEL_4;
-           HAL_ADC_ConfigChannel(&hadc1, &sConfig);
-           HAL_ADC_Start(&hadc1);
-           HAL_ADC_PollForConversion(&hadc1, 10000);
-           uint32_t pot_raw = HAL_ADC_GetValue(&hadc1);
-           pot_value = (float)pot_raw / 4095.0f; // Normalizzato 0.0–1.0
-
-           // Lettura LDR (ADC_CHANNEL_0)
-           sConfig.Channel = ADC_CHANNEL_0;
-           HAL_ADC_ConfigChannel(&hadc1, &sConfig);
-           HAL_ADC_Start(&hadc1);
-           HAL_ADC_PollForConversion(&hadc1, 10000);
-           uint32_t ldr_raw = HAL_ADC_GetValue(&hadc1);
-           sensor_ldr.valor = (ldr_raw / 4095.0f) * 100.0f; // %
-
-           // Lettura NTC (ADC_CHANNEL_1)
-           sConfig.Channel = ADC_CHANNEL_1;
-           HAL_ADC_ConfigChannel(&hadc1, &sConfig);
-           HAL_ADC_Start(&hadc1);
-           HAL_ADC_PollForConversion(&hadc1, 10000);
-           uint32_t ntc_raw = HAL_ADC_GetValue(&hadc1);
-           // Conversione semplificata, da sostituire con formula BETA se necessario
-           sensor_ntc.valor = BETA/ (log((-10000.0 * 3.3 / (ntc_raw * 3.3 / 4095.9 - 3.3)
-               	- 10000.0) / R25) + BETA / T25) - 273.18;
-
-
-           // Visualizzazione a barra LED del sensore selezionato
-           if (sensorSelector == 0) {
-               show_value_on_leds(sensor_ldr.valor, sensor_ldr.minimo, sensor_ldr.maximo);
-               flash_alarm_led(sensor_ldr.nivel_alarma, sensor_ldr.minimo, sensor_ldr.maximo, tick);
-           } else {
-               show_value_on_leds(sensor_ntc.valor, sensor_ntc.minimo, sensor_ntc.maximo);
-               flash_alarm_led(sensor_ntc.nivel_alarma, sensor_ntc.minimo, sensor_ntc.maximo, tick);
-           }
-
-           tick++;
-           vTaskDelay(50 / portTICK_RATE_MS); // 20 Hz
-       }
-   }
-
-
-   auto res_task=xTaskCreate( Task_HW,"Tarea_HW",2048,NULL,	NORMAL_PRIORITY,NULL);
-   if( res_task != pdPASS ){
-   			printf("PANIC: Error al crear Tarea Visualizador\r\n");
-   			fflush(NULL);
-   			while(1);
-   	}
-
 
   /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
@@ -508,6 +373,32 @@ int _write(int file, char *ptr, int len){
     }
     return len;
 }
+
+
+void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
+	// Configurar o LDR (0% a 100%)
+	sensor_ldr->valor = 0.0;
+	sensor_ldr->minimo = 0.0;
+	sensor_ldr->maximo = 100.0;
+	sensor_ldr->nivel_alarma = 50.0;
+	sensor_ldr->activated = 0;
+	sensor_ldr->time_activation = 0;
+	sensor_ldr->value_flashing = 0;
+	sensor_ldr->flashing_last_time_activation = 0;
+
+	// Configurar o NTC (25ºC a 30ºC)
+	sensor_ntc->valor = 0.0;
+	sensor_ntc->minimo = 25.0;
+	sensor_ntc->maximo = 30.0;
+	sensor_ntc->nivel_alarma = 28.0;
+	sensor_ntc->activated = 0;
+	sensor_ntc->time_activation = 0;
+	sensor_ntc->value_flashing = 0;
+	sensor_ntc->flashing_last_time_activation = 0;
+
+}
+
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -527,6 +418,66 @@ void StartDefaultTask(void *argument)
   }
   /* USER CODE END 5 */
 }
+
+/* USER CODE BEGIN Header_StartTask_HW */
+/**
+* @brief Function implementing the Task_HW thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask_HW */
+void StartTask_HW(void *argument)
+{
+  /* USER CODE BEGIN StartTask_HW */
+  // 1. Initialisation des variables (Exécuté une seule fois)
+  struct sensor_t sensor_ldr;
+  struct sensor_t sensor_ntc;
+  float pot_value = 0.0f;
+
+  init_sensores(&sensor_ldr, &sensor_ntc);
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+
+  /* Infinite loop */
+  for(;;)
+  {
+      // 2. Lecture potentiomètre (ADC_CHANNEL_4)
+      sConfig.Channel = ADC_CHANNEL_4;
+      HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+      HAL_ADC_Start(&hadc1);
+      HAL_ADC_PollForConversion(&hadc1, 10000);
+      uint32_t pot_raw = HAL_ADC_GetValue(&hadc1);
+      pot_value = (float)pot_raw / 4095.0f; // Normalisé 0.0–1.0
+
+      // 3. Lecture LDR (ADC_CHANNEL_0)
+      sConfig.Channel = ADC_CHANNEL_0;
+      HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+      HAL_ADC_Start(&hadc1);
+      HAL_ADC_PollForConversion(&hadc1, 10000);
+      uint32_t ldr_raw = HAL_ADC_GetValue(&hadc1);
+      sensor_ldr.valor = (ldr_raw / 4095.0f) * 100.0f; // %
+
+      // 4. Lecture NTC (ADC_CHANNEL_1)
+      sConfig.Channel = ADC_CHANNEL_1;
+      HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+      HAL_ADC_Start(&hadc1);
+      HAL_ADC_PollForConversion(&hadc1, 10000);
+      uint32_t ntc_raw = HAL_ADC_GetValue(&hadc1);
+      // Calcul mathématique de la température
+      sensor_ntc.valor = BETA/ (log((-10000.0 * 3.3 / (ntc_raw * 3.3 / 4095.9 - 3.3)
+             	- 10000.0) / R25) + BETA / T25) - 273.18;
+
+      // 5. Affichage sur le port série (PuTTY)
+      printf("LDR: %d%% | NTC: %d C | POT: %d \r\n", sensor_ldr.valor, sensor_ntc.valor, pot_value);
+
+      // 6. Pause de la tâche de 50 millisecondes
+      osDelay(50);
+  }
+  /* USER CODE END StartTask_HW */
+}
+
 
 /**
   * @brief  Period elapsed callback in non blocking mode
