@@ -111,6 +111,65 @@ void StartTask_Render(void *argument);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+int _write(int file, char *ptr, int len){
+    int DataIdx;
+    for (DataIdx = 0; DataIdx < len; DataIdx++){
+   	 HAL_UART_Transmit(&huart2, (uint8_t*)ptr++,1,1000);
+    }
+    return len;
+}
+
+
+void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
+	// Configurar o LDR (0% a 100%)
+	sensor_ldr->valor = 0.0;
+	sensor_ldr->minimo = 0.0;
+	sensor_ldr->maximo = 100.0;
+	sensor_ldr->nivel_alarma = 7;
+	sensor_ldr->activated = 0;
+	sensor_ldr->time_activation = 0;
+	sensor_ldr->value_flashing = 0;
+	sensor_ldr->flashing_last_time_activation = 0;
+
+	// Configurar o NTC (25ºC a 30ºC)
+	sensor_ntc->valor = 0.0;
+	sensor_ntc->minimo = 20.;
+	sensor_ntc->maximo = 35.0;
+	sensor_ntc->nivel_alarma = 7;
+	sensor_ntc->activated = 0;
+	sensor_ntc->time_activation = 0;
+	sensor_ntc->value_flashing = 0;
+	sensor_ntc->flashing_last_time_activation = 0;
+
+}
+
+void render_leds(int number_leds, int led_alarm,long int last_blink){
+	for (int i =0;i<8;i++){
+		if (i != led_alarm){
+			if (i<number_leds){
+				HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_SET);
+			}
+			else {
+				HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_RESET);
+			}
+		}
+	}
+	if(xTaskGetTickCount()- last_blink > 10000){
+		last_blink = xTaskGetTickCount();
+		HAL_GPIO_TogglePin(leds_ports[led_alarm], leds[led_alarm]);
+	}
+}
+
+int clamp(int value, int min, int max){
+	if (value > max){
+		return max;
+	}
+	else if (value < min){
+		return min;
+	}
+	return value;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -393,55 +452,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-int _write(int file, char *ptr, int len){
-    int DataIdx;
-    for (DataIdx = 0; DataIdx < len; DataIdx++){
-   	 HAL_UART_Transmit(&huart2, (uint8_t*)ptr++,1,1000);
-    }
-    return len;
-}
-
-
-void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
-	// Configurar o LDR (0% a 100%)
-	sensor_ldr->valor = 0.0;
-	sensor_ldr->minimo = 0.0;
-	sensor_ldr->maximo = 100.0;
-	sensor_ldr->nivel_alarma = 7;
-	sensor_ldr->activated = 0;
-	sensor_ldr->time_activation = 0;
-	sensor_ldr->value_flashing = 0;
-	sensor_ldr->flashing_last_time_activation = 0;
-
-	// Configurar o NTC (25ºC a 30ºC)
-	sensor_ntc->valor = 0.0;
-	sensor_ntc->minimo = 25.0;
-	sensor_ntc->maximo = 30.0;
-	sensor_ntc->nivel_alarma = 7;
-	sensor_ntc->activated = 0;
-	sensor_ntc->time_activation = 0;
-	sensor_ntc->value_flashing = 0;
-	sensor_ntc->flashing_last_time_activation = 0;
-
-}
-
-void render_leds(int number_leds, int led_alarm,long int last_blink){
-	for (int i =0;i<8;i++){
-		if (i != led_alarm){
-			if (i<number_leds){
-				HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_SET);
-			}
-			else {
-				HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_RESET);
-			}
-		}
-	}
-	if(xTaskGetTickCount()- last_blink > 10000){
-		last_blink = xTaskGetTickCount();
-		HAL_GPIO_TogglePin(leds_ports[led_alarm], leds[led_alarm]);
-	}
-}
-
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -472,19 +482,10 @@ void StartDefaultTask(void *argument)
 void StartTask_HW(void *argument)
 {
   /* USER CODE BEGIN StartTask_HW */
-  // 1. Initialisation des variables (Exécuté une seule fois)
-  struct sensor_t sensor_ldr;
-  struct sensor_t sensor_ntc;
-  float pot_value = 0.0f;
 
 
   GPIO_PinState last_button_state = GPIO_PIN_SET;
 
-  //variaibili per controllare che i pulsanti sono premuti una sola volta
-  uint32_t last_left_press = 0;
-  uint32_t last_right_press = 0;
-
-  init_sensores(&sensor_ldr, &sensor_ntc);
 
   ADC_ChannelConfTypeDef sConfig = {0};
   sConfig.Rank = 1;
@@ -563,26 +564,10 @@ void StartTask_HW(void *argument)
     	  // Qui non serve toggle, basta segnalare che è stato premuto per resettare
       }
 
-      /*if (HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin) == GPIO_PIN_RESET) {
-                  if (osKernelGetTickCount() - last_left_press > 250) { // Debounce di 250ms
-                      button_pressed_left = true;
-                      last_left_press = osKernelGetTickCount();
-                  }
-              }
-
-      if (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET) {
-                  if (osKernelGetTickCount() - last_right_press > 250) {
-                      button_pressed_right = true;
-                      last_right_press = osKernelGetTickCount();
-                  }
-              }
-
-      printf("--- DEBUG INPUT ---\r\n");
-      printf("BTN_L: %s | BTN_R: %s\r\n",
-                      button_pressed_left ? "PREMUTO" : "OFF",
-                      button_pressed_right ? "PREMUTO" : "OFF");
-      printf("-------------------\r\n");*/
-
+      if (button_pressed_left){
+    	  interface = 1 - interface;
+    	  button_pressed_left = false;
+      }
 
       // 5. Affichage sur le port série (PuTTY
       printf("LDR: %d%% | NTC: %d C | POT: %d \r\n", (int) sensor_ldr.valor, (int) sensor_ntc.valor,(int) (pot_value*100));
@@ -613,14 +598,18 @@ void StartTask_Render(void *argument)
   {
 	if (interface == 0){
 
-		nb_leds = (int) (sensor_ntc.valor/100./(sensor_ntc.maximo - sensor_ntc.minimo)*8);
+		nb_leds = (int) ((sensor_ntc.valor-sensor_ntc.minimo)/(sensor_ntc.maximo - sensor_ntc.minimo)*8);
 		led_alarm = sensor_ntc.nivel_alarma;
-		printf("nb_leds %d",nb_leds,"led_alarm  %d",led_alarm);
+		nb_leds = clamp(nb_leds,0,7);
+		led_alarm = clamp(led_alarm,0,7);
+		printf("nb_leds %d, led_alarm  %d \n",nb_leds,led_alarm);
 		render_leds(nb_leds,led_alarm,last_blinking);
 	}
 	else {
-		nb_leds = (int) (sensor_ldr.valor/100./(sensor_ldr.maximo - sensor_ldr.minimo)*8);
+		nb_leds = (int) ((sensor_ldr.valor-sensor_ldr.minimo)/(sensor_ldr.maximo - sensor_ldr.minimo)*8);
 		led_alarm = (int) sensor_ldr.nivel_alarma;
+		nb_leds = clamp(nb_leds,0,7);
+		led_alarm = clamp(led_alarm,0,7);
 		render_leds(nb_leds,led_alarm,last_blinking);
 	}
 
