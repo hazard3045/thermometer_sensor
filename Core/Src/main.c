@@ -65,14 +65,14 @@ const osThreadAttr_t defaultTask_attributes = {
 osThreadId_t Task_HWHandle;
 const osThreadAttr_t Task_HW_attributes = {
   .name = "Task_HW",
-  .stack_size = 2048 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
-/* Definitions for myTask_Out */
-osThreadId_t myTask_OutHandle;
-const osThreadAttr_t myTask_Out_attributes = {
-  .name = "myTask_Out",
-  .stack_size = 2048 * 4,
+/* Definitions for myTask_Render */
+osThreadId_t myTask_RenderHandle;
+const osThreadAttr_t myTask_Render_attributes = {
+  .name = "myTask_Render",
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 
@@ -83,7 +83,15 @@ int selectedSensor;
 uint32_t alarm_off_timestamp = 0; // Memorizza quando l'allarme è stato spento
 
 int interface = 0; // which sensor is shown, 0 for temperature, 1 for light
-bool setting_up = false; //are setting up the alarm or not, 0 for not, 1 for yes
+
+uint16_t leds[] = {LED1_Pin,LED2_Pin,LED3_Pin,LED4_Pin,LED5_Pin,LED6_Pin,LED7_Pin,LED8_Pin};
+
+GPIO_TypeDef* leds_ports[] = {GPIOB, GPIOB, GPIOA, GPIOB, GPIOB, GPIOA, GPIOB, GPIOA};
+
+struct sensor_t sensor_ldr;
+struct sensor_t sensor_ntc;
+float pot_value = 0.0f;
+
 
 /* USER CODE END PV */
 
@@ -94,7 +102,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 void StartDefaultTask(void *argument);
 void StartTask_HW(void *argument);
-void StartTask_Out(void *argument);
+void StartTask_Render(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -165,15 +173,15 @@ int main(void)
   /* creation of Task_HW */
   Task_HWHandle = osThreadNew(StartTask_HW, NULL, &Task_HW_attributes);
 
-  /* creation of myTask_Out */
-  myTask_OutHandle = osThreadNew(StartTask_Out, NULL, &myTask_Out_attributes);
+  /* creation of myTask_Render */
+  myTask_RenderHandle = osThreadNew(StartTask_Render, NULL, &myTask_Render_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
-  /* add events, ... */
+  init_sensores(&sensor_ldr, &sensor_ntc);
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
@@ -399,7 +407,7 @@ void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
 	sensor_ldr->valor = 0.0;
 	sensor_ldr->minimo = 0.0;
 	sensor_ldr->maximo = 100.0;
-	sensor_ldr->nivel_alarma = 50.0;
+	sensor_ldr->nivel_alarma = 7;
 	sensor_ldr->activated = 0;
 	sensor_ldr->time_activation = 0;
 	sensor_ldr->value_flashing = 0;
@@ -409,7 +417,7 @@ void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
 	sensor_ntc->valor = 0.0;
 	sensor_ntc->minimo = 25.0;
 	sensor_ntc->maximo = 30.0;
-	sensor_ntc->nivel_alarma = 28.0;
+	sensor_ntc->nivel_alarma = 7;
 	sensor_ntc->activated = 0;
 	sensor_ntc->time_activation = 0;
 	sensor_ntc->value_flashing = 0;
@@ -417,6 +425,22 @@ void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
 
 }
 
+void render_leds(int number_leds, int led_alarm,long int last_blink){
+	for (int i =0;i<8;i++){
+		if (i != led_alarm){
+			if (i<number_leds){
+				HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_SET);
+			}
+			else {
+				HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_RESET);
+			}
+		}
+	}
+	if(xTaskGetTickCount()- last_blink > 10000){
+		last_blink = xTaskGetTickCount();
+		HAL_GPIO_TogglePin(leds_ports[led_alarm], leds[led_alarm]);
+	}
+}
 
 /* USER CODE END 4 */
 
@@ -484,8 +508,8 @@ void StartTask_HW(void *argument)
       HAL_ADC_PollForConversion(&hadc1, 10000);
       uint32_t ldr_raw = HAL_ADC_GetValue(&hadc1);
       sensor_ldr.valor = (ldr_raw / 4095.0f) * 100.0f; // %
-      if (sensor_ldr.valor > sensor_ldr.nivel_alarma){
-
+      if (interface == 1){
+    	  sensor_ldr.nivel_alarma = (int) (pot_value*8);
       }
 
       // 4. Lecture NTC (ADC_CHANNEL_1)
@@ -497,6 +521,9 @@ void StartTask_HW(void *argument)
       // Calcul mathématique de la température
       sensor_ntc.valor = BETA/ (log((-10000.0 * 3.3 / (ntc_raw * 3.3 / 4095.9 - 3.3)
              	- 10000.0) / R25) + BETA / T25) - 273.18;
+      if (interface == 0){
+    	  sensor_ntc.nivel_alarma = (int) (pot_value*8);
+      }
 
 
       //Lecture of buttons
@@ -566,22 +593,41 @@ void StartTask_HW(void *argument)
   /* USER CODE END StartTask_HW */
 }
 
-/* USER CODE BEGIN Header_StartTask_Out */
+/* USER CODE BEGIN Header_StartTask_Render */
 /**
-* @brief Function implementing the myTask_Out thread.
+* @brief Function implementing the myTask_Render thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartTask_Out */
-void StartTask_Out(void *argument)
+/* USER CODE END Header_StartTask_Render */
+void StartTask_Render(void *argument)
 {
-  /* USER CODE BEGIN StartTask_Out */
+  /* USER CODE BEGIN StartTask_Render */
+
+	long int last_blinking =0;
+	int nb_leds = 0;
+	int led_alarm = 0;
+
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+	if (interface == 0){
+
+		nb_leds = (int) (sensor_ntc.valor/100./(sensor_ntc.maximo - sensor_ntc.minimo)*8);
+		led_alarm = sensor_ntc.nivel_alarma;
+		printf("nb_leds %d",nb_leds,"led_alarm  %d",led_alarm);
+		render_leds(nb_leds,led_alarm,last_blinking);
+	}
+	else {
+		nb_leds = (int) (sensor_ldr.valor/100./(sensor_ldr.maximo - sensor_ldr.minimo)*8);
+		led_alarm = (int) sensor_ldr.nivel_alarma;
+		render_leds(nb_leds,led_alarm,last_blinking);
+	}
+
+
+    osDelay(20);
   }
-  /* USER CODE END StartTask_Out */
+  /* USER CODE END StartTask_Render */
 }
 
 /**
