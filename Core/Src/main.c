@@ -35,7 +35,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+osMutexId_t sensorMutex;
 
 /* USER CODE END PD */
 
@@ -82,7 +82,6 @@ bool button_pressed_right = false;
 int selectedSensor;
 uint32_t alarm_off_timestamp = 0; // Memorizza quando l'allarme è stato spento
 
-int interface = 0; // which sensor is shown, 0 for temperature, 1 for light
 
 uint16_t leds[] = {LED1_Pin,LED2_Pin,LED3_Pin,LED4_Pin,LED5_Pin,LED6_Pin,LED7_Pin,LED8_Pin};
 
@@ -91,6 +90,7 @@ GPIO_TypeDef* leds_ports[] = {GPIOB, GPIOB, GPIOA, GPIOB, GPIOB, GPIOA, GPIOB, G
 struct sensor_t sensor_ldr;
 struct sensor_t sensor_ntc;
 float pot_value = 0.0f;
+bool alarm_triggered = false;
 
 
 /* USER CODE END PV */
@@ -170,6 +170,7 @@ int clamp(int value, int min, int max){
 	return value;
 }
 
+
 /* USER CODE END 0 */
 
 /**
@@ -211,6 +212,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
+  sensorMutex = osMutexNew(NULL);
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -483,8 +485,8 @@ void StartTask_HW(void *argument)
 {
   /* USER CODE BEGIN StartTask_HW */
 
-
   GPIO_PinState last_button_state = GPIO_PIN_SET;
+  GPIO_PinState last_state_right = GPIO_PIN_SET;
 
 
   ADC_ChannelConfTypeDef sConfig = {0};
@@ -500,7 +502,7 @@ void StartTask_HW(void *argument)
       HAL_ADC_Start(&hadc1);
       HAL_ADC_PollForConversion(&hadc1, 10000);
       uint32_t pot_raw = HAL_ADC_GetValue(&hadc1);
-      pot_value = (float)pot_raw / 4095.0f; // Normalisé 0.0–1.0
+
 
       // 3. Lecture LDR (ADC_CHANNEL_0)
       sConfig.Channel = ADC_CHANNEL_0;
@@ -508,10 +510,7 @@ void StartTask_HW(void *argument)
       HAL_ADC_Start(&hadc1);
       HAL_ADC_PollForConversion(&hadc1, 10000);
       uint32_t ldr_raw = HAL_ADC_GetValue(&hadc1);
-      sensor_ldr.valor = (ldr_raw / 4095.0f) * 100.0f; // %
-      if (interface == 1){
-    	  sensor_ldr.nivel_alarma = (int) (pot_value*8);
-      }
+
 
       // 4. Lecture NTC (ADC_CHANNEL_1)
       sConfig.Channel = ADC_CHANNEL_1;
@@ -519,14 +518,32 @@ void StartTask_HW(void *argument)
       HAL_ADC_Start(&hadc1);
       HAL_ADC_PollForConversion(&hadc1, 10000);
       uint32_t ntc_raw = HAL_ADC_GetValue(&hadc1);
-      // Calcul mathématique de la température
-      sensor_ntc.valor = BETA/ (log((-10000.0 * 3.3 / (ntc_raw * 3.3 / 4095.9 - 3.3)
-             	- 10000.0) / R25) + BETA / T25) - 273.18;
-      if (interface == 0){
-    	  sensor_ntc.nivel_alarma = (int) (pot_value*8);
+
+
+      osMutexAcquire(sensorMutex, osWaitForever);
+            //sensor_ntc.valor = BETA / (log((-10000.0 * 3.3 / (ntc_raw * 3.3 / 4095.9 - 3.3) - 10000.0) / R25) + BETA / T25) - 273.18;
+      // Protezione contro valori ADC agli estremi (0 e 4095)
+      // che causano divisione per zero o log di numero negativo
+      if (ntc_raw > 0 && ntc_raw < 4095) {
+          float voltage     = (ntc_raw * 3.3f) / 4095.0f;        // Tensione sul partitore [V]
+          float r_ntc       = (10000.0f * voltage) / (3.3f - voltage); // Resistenza NTC [Ω]
+
+          if (r_ntc > 0.0f) {
+              sensor_ntc.valor = BETA / (log(r_ntc / R25) + BETA / T25) - 273.15f;
+          }
+          // Se r_ntc <= 0 (non fisicamente possibile, ma per sicurezza) si mantiene il valore precedente
       }
+      // Se ntc_raw == 0 o == 4095 si mantiene l'ultimo valore valido
 
+            sensor_ldr.valor = (ldr_raw / 4095.0f) * 100.0f; // %
 
+            pot_value = (float)pot_raw / 4095.0f; // Normalise 0.0–1.0
+
+            if (selectedSensor == 0)
+              sensor_ntc.nivel_alarma = (int) (pot_value*8);
+            else
+              sensor_ldr.nivel_alarma = (int) (pot_value*8);
+            osMutexRelease(sensorMutex);
       //Lecture of buttons
 
       // 1. Lettura dello stato attuale del pin
@@ -547,7 +564,7 @@ void StartTask_HW(void *argument)
 
     	  // Debug immediato su PuTTY
     	  printf("\r\n[EVENT] Pulsante Sinistro Premuto! Sensore selezionato: %s\r\n",
-    			  (selectedSensor == 0) ? "LDR (Luce)" : "NTC (Temperatura)");
+    			  (selectedSensor == 1) ? "LDR (Luce)" : "NTC (Temperatura)");
 
     	  // Un piccolo delay per il debounce meccanico
     	  osDelay(50);
@@ -557,17 +574,21 @@ void StartTask_HW(void *argument)
       last_button_state = current_button_state;
 
       // 4. Gestione Pulsante Destro (Reset Allarme)
-      if (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET) {
-    	  button_pressed_right = true;
-    	  alarm_off_timestamp = osKernelGetTickCount();
-    	  printf("\r\n[RESET] Alarm silenced. Restart in 10 seconds...\r\n");
-    	  // Qui non serve toggle, basta segnalare che è stato premuto per resettare
+      GPIO_PinState current_state_right = HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin);
+      if (last_state_right == GPIO_PIN_SET && current_state_right == GPIO_PIN_RESET) {
+          button_pressed_right = true;
+          alarm_off_timestamp = osKernelGetTickCount();
+          printf("\r\n[RESET] Alarm silenced.\r\n");
+          HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
+          alarm_triggered = 0;
+      }
+      last_state_right = current_state_right;
+
+      // --- 5. COMANDO FISICO BUZZER ---
+      if (alarm_triggered) {
+    	  HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
       }
 
-      if (button_pressed_left){
-    	  interface = 1 - interface;
-    	  button_pressed_left = false;
-      }
 
       // 5. Affichage sur le port série (PuTTY
       printf("LDR: %d%% | NTC: %d C | POT: %d \r\n", (int) sensor_ldr.valor, (int) sensor_ntc.valor,(int) (pot_value*100));
@@ -596,22 +617,30 @@ void StartTask_Render(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	if (interface == 0){
-
+	if (selectedSensor == 0){
+		osMutexAcquire(sensorMutex, osWaitForever);
 		nb_leds = (int) ((sensor_ntc.valor-sensor_ntc.minimo)/(sensor_ntc.maximo - sensor_ntc.minimo)*8);
 		led_alarm = sensor_ntc.nivel_alarma;
+		osMutexRelease(sensorMutex);
 		nb_leds = clamp(nb_leds,0,7);
 		led_alarm = clamp(led_alarm,0,7);
-		printf("nb_leds %d, led_alarm  %d \n",nb_leds,led_alarm);
+		//printf("nb_leds %d, led_alarm  %d \n",nb_leds,led_alarm);
 		render_leds(nb_leds,led_alarm,last_blinking);
+
 	}
 	else {
+		osMutexAcquire(sensorMutex, osWaitForever);
 		nb_leds = (int) ((sensor_ldr.valor-sensor_ldr.minimo)/(sensor_ldr.maximo - sensor_ldr.minimo)*8);
 		led_alarm = (int) sensor_ldr.nivel_alarma;
+		osMutexRelease(sensorMutex);
 		nb_leds = clamp(nb_leds,0,7);
 		led_alarm = clamp(led_alarm,0,7);
 		render_leds(nb_leds,led_alarm,last_blinking);
 	}
+
+	if (led_alarm <= nb_leds && (osKernelGetTickCount() - alarm_off_timestamp) >= 5000 ){
+		alarm_triggered = 1;
+	};
 
 
     osDelay(20);
