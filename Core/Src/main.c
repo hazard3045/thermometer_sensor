@@ -75,9 +75,12 @@ const osThreadAttr_t myTask_Out_attributes = {
   .stack_size = 2048 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+
 /* USER CODE BEGIN PV */
 bool button_pressed_left = false; // false for off and true for on, set to true in inputs tasks and off in the outputs tasks
 bool button_pressed_right = false;
+int selectedSensor;
+uint32_t alarm_off_timestamp = 0; // Memorizza quando l'allarme è stato spento
 
 int interface = 0; // which sensor is shown, 0 for temperature, 1 for light
 bool setting_up = false; //are setting up the alarm or not, 0 for not, 1 for yes
@@ -450,6 +453,13 @@ void StartTask_HW(void *argument)
   struct sensor_t sensor_ntc;
   float pot_value = 0.0f;
 
+
+  GPIO_PinState last_button_state = GPIO_PIN_SET;
+
+  //variaibili per controllare che i pulsanti sono premuti una sola volta
+  uint32_t last_left_press = 0;
+  uint32_t last_right_press = 0;
+
   init_sensores(&sensor_ldr, &sensor_ntc);
 
   ADC_ChannelConfTypeDef sConfig = {0};
@@ -488,7 +498,66 @@ void StartTask_HW(void *argument)
       sensor_ntc.valor = BETA/ (log((-10000.0 * 3.3 / (ntc_raw * 3.3 / 4095.9 - 3.3)
              	- 10000.0) / R25) + BETA / T25) - 273.18;
 
-      // 5. Affichage sur le port série (PuTTY)
+
+      //Lecture of buttons
+
+      // 1. Lettura dello stato attuale del pin
+      GPIO_PinState current_button_state = HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin);
+
+      // 2. Logica di rilevamento fronte di discesa (pressione)
+      // Se prima era ALTO (non premuto) e ora è BASSO (premuto)
+      if (last_button_state == GPIO_PIN_SET && current_button_state == GPIO_PIN_RESET) {
+
+    	  // --- AZIONE DI TOGGLE ---
+    	  if (selectedSensor == 0) {
+    		  selectedSensor = 1; // Passa a NTC
+    	  } else {
+    		  selectedSensor = 0; // Torna a LDR
+    	  }
+    	  // Segnaliamo l'evento per i tuoi amici (opzionale, se serve al loro task)
+    	  button_pressed_left = true;
+
+    	  // Debug immediato su PuTTY
+    	  printf("\r\n[EVENT] Pulsante Sinistro Premuto! Sensore selezionato: %s\r\n",
+    			  (selectedSensor == 0) ? "LDR (Luce)" : "NTC (Temperatura)");
+
+    	  // Un piccolo delay per il debounce meccanico
+    	  osDelay(50);
+      }
+
+      // 3. Aggiorniamo lo stato precedente per il prossimo ciclo
+      last_button_state = current_button_state;
+
+      // 4. Gestione Pulsante Destro (Reset Allarme)
+      if (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET) {
+    	  button_pressed_right = true;
+    	  alarm_off_timestamp = osKernelGetTickCount();
+    	  printf("\r\n[RESET] Alarm silenced. Restart in 10 seconds...\r\n");
+    	  // Qui non serve toggle, basta segnalare che è stato premuto per resettare
+      }
+
+      /*if (HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin) == GPIO_PIN_RESET) {
+                  if (osKernelGetTickCount() - last_left_press > 250) { // Debounce di 250ms
+                      button_pressed_left = true;
+                      last_left_press = osKernelGetTickCount();
+                  }
+              }
+
+      if (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET) {
+                  if (osKernelGetTickCount() - last_right_press > 250) {
+                      button_pressed_right = true;
+                      last_right_press = osKernelGetTickCount();
+                  }
+              }
+
+      printf("--- DEBUG INPUT ---\r\n");
+      printf("BTN_L: %s | BTN_R: %s\r\n",
+                      button_pressed_left ? "PREMUTO" : "OFF",
+                      button_pressed_right ? "PREMUTO" : "OFF");
+      printf("-------------------\r\n");*/
+
+
+      // 5. Affichage sur le port série (PuTTY
       printf("LDR: %d%% | NTC: %d C | POT: %d \r\n", (int) sensor_ldr.valor, (int) sensor_ntc.valor,(int) (pot_value*100));
 
       // 6. Pause de la tâche de 50 millisecondes
