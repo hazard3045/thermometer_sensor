@@ -77,10 +77,10 @@ const osThreadAttr_t myTask_Render_attributes = {
 };
 
 /* USER CODE BEGIN PV */
-bool button_pressed_left = false; // false for off and true for on, set to true in inputs tasks and off in the outputs tasks
+bool button_pressed_left = false; // False for off and true for on, set to true in inputs tasks and off in the outputs tasks
 bool button_pressed_right = false;
 int selectedSensor;
-uint32_t alarm_off_timestamp = 0; // Memorizza quando l'allarme è stato spento
+uint32_t alarm_off_timestamp = 0; // Stores the timestamp when the alarm was manually disabled
 
 
 uint16_t leds[] = {LED1_Pin,LED2_Pin,LED3_Pin,LED4_Pin,LED5_Pin,LED6_Pin,LED7_Pin,LED8_Pin};
@@ -121,7 +121,7 @@ int _write(int file, char *ptr, int len){
 
 
 void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
-	// Configurar o LDR (0% a 100%)
+	// Configure the LDR sensor (0% to 100%)
 	sensor_ldr->valor = 0.0;
 	sensor_ldr->minimo = 0.0;
 	sensor_ldr->maximo = 100.0;
@@ -131,7 +131,7 @@ void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
 	sensor_ldr->value_flashing = 0;
 	sensor_ldr->flashing_last_time_activation = 0;
 
-	// Configurar o NTC (25ºC a 30ºC)
+	// Configure the NTC sensor (20°C to 35°C)
 	sensor_ntc->valor = 0.0;
 	sensor_ntc->minimo = 20.;
 	sensor_ntc->maximo = 35.0;
@@ -143,7 +143,7 @@ void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
 
 }
 
-void render_leds(int number_leds, int led_alarm,long int last_blink){
+void render_leds(int number_leds, int led_alarm,long int * last_blink){
 	for (int i =0;i<8;i++){
 		if (i != led_alarm){
 			if (i<number_leds){
@@ -154,8 +154,8 @@ void render_leds(int number_leds, int led_alarm,long int last_blink){
 			}
 		}
 	}
-	if(xTaskGetTickCount()- last_blink > 10000){
-		last_blink = xTaskGetTickCount();
+	if(xTaskGetTickCount()- *last_blink > 200){
+		*last_blink = xTaskGetTickCount();
 		HAL_GPIO_TogglePin(leds_ports[led_alarm], leds[led_alarm]);
 	}
 }
@@ -469,7 +469,7 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    osDelay(1000000);
   }
   /* USER CODE END 5 */
 }
@@ -488,7 +488,6 @@ void StartTask_HW(void *argument)
   GPIO_PinState last_button_state = GPIO_PIN_SET;
   GPIO_PinState last_state_right = GPIO_PIN_SET;
 
-
   ADC_ChannelConfTypeDef sConfig = {0};
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
@@ -496,84 +495,74 @@ void StartTask_HW(void *argument)
   /* Infinite loop */
   for(;;)
   {
-      // 2. Lecture potentiomètre (ADC_CHANNEL_4)
+      // Read potentiometer (ADC_CHANNEL_4)
       sConfig.Channel = ADC_CHANNEL_4;
       HAL_ADC_ConfigChannel(&hadc1, &sConfig);
       HAL_ADC_Start(&hadc1);
       HAL_ADC_PollForConversion(&hadc1, 10000);
       uint32_t pot_raw = HAL_ADC_GetValue(&hadc1);
 
-
-      // 3. Lecture LDR (ADC_CHANNEL_0)
+      // Read LDR (ADC_CHANNEL_0)
       sConfig.Channel = ADC_CHANNEL_0;
       HAL_ADC_ConfigChannel(&hadc1, &sConfig);
       HAL_ADC_Start(&hadc1);
       HAL_ADC_PollForConversion(&hadc1, 10000);
       uint32_t ldr_raw = HAL_ADC_GetValue(&hadc1);
 
-
-      // 4. Lecture NTC (ADC_CHANNEL_1)
+      // Read NTC (ADC_CHANNEL_1)
       sConfig.Channel = ADC_CHANNEL_1;
       HAL_ADC_ConfigChannel(&hadc1, &sConfig);
       HAL_ADC_Start(&hadc1);
       HAL_ADC_PollForConversion(&hadc1, 10000);
       uint32_t ntc_raw = HAL_ADC_GetValue(&hadc1);
 
-
       osMutexAcquire(sensorMutex, osWaitForever);
-            //sensor_ntc.valor = BETA / (log((-10000.0 * 3.3 / (ntc_raw * 3.3 / 4095.9 - 3.3) - 10000.0) / R25) + BETA / T25) - 273.18;
-      // Protezione contro valori ADC agli estremi (0 e 4095)
-      // che causano divisione per zero o log di numero negativo
+
+      // Protection against extreme ADC values (0 and 4095)
       if (ntc_raw > 0 && ntc_raw < 4095) {
-          float voltage     = (ntc_raw * 3.3f) / 4095.0f;        // Tensione sul partitore [V]
-          float r_ntc       = (10000.0f * voltage) / (3.3f - voltage); // Resistenza NTC [Ω]
+          float voltage     = (ntc_raw * 3.3f) / 4095.0f;        // Voltage on the voltage divider [V]
+          float r_ntc       = (10000.0f * voltage) / (3.3f - voltage); // NTC Resistance [Ohm]
 
           if (r_ntc > 0.0f) {
               sensor_ntc.valor = BETA / (log(r_ntc / R25) + BETA / T25) - 273.15f;
           }
-          // Se r_ntc <= 0 (non fisicamente possibile, ma per sicurezza) si mantiene il valore precedente
       }
-      // Se ntc_raw == 0 o == 4095 si mantiene l'ultimo valore valido
 
-            sensor_ldr.valor = (ldr_raw / 4095.0f) * 100.0f; // %
+      sensor_ldr.valor = (ldr_raw / 4095.0f) * 100.0f; // %
 
-            pot_value = (float)pot_raw / 4095.0f; // Normalise 0.0–1.0
+      pot_value = (float)pot_raw / 4095.0f; // Normalize to 0.0 - 1.0
 
-            if (selectedSensor == 0)
-              sensor_ntc.nivel_alarma = (int) (pot_value*8);
-            else
-              sensor_ldr.nivel_alarma = (int) (pot_value*8);
-            osMutexRelease(sensorMutex);
-      //Lecture of buttons
+      if (selectedSensor == 0)
+        sensor_ntc.nivel_alarma = (int) (pot_value*8);
+      else
+        sensor_ldr.nivel_alarma = (int) (pot_value*8);
+      osMutexRelease(sensorMutex);
 
-      // 1. Lettura dello stato attuale del pin
+      // Read current left pin state
       GPIO_PinState current_button_state = HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin);
 
-      // 2. Logica di rilevamento fronte di discesa (pressione)
-      // Se prima era ALTO (non premuto) e ora è BASSO (premuto)
+      // Detect falling edge (button press)
       if (last_button_state == GPIO_PIN_SET && current_button_state == GPIO_PIN_RESET) {
 
-    	  // --- AZIONE DI TOGGLE ---
     	  if (selectedSensor == 0) {
-    		  selectedSensor = 1; // Passa a NTC
+    		  selectedSensor = 1; // Switch to NTC
     	  } else {
-    		  selectedSensor = 0; // Torna a LDR
+    		  selectedSensor = 0; // Switch back to LDR
     	  }
-    	  // Segnaliamo l'evento per i tuoi amici (opzionale, se serve al loro task)
+
     	  button_pressed_left = true;
 
-    	  // Debug immediato su PuTTY
-    	  printf("\r\n[EVENT] Pulsante Sinistro Premuto! Sensore selezionato: %s\r\n",
-    			  (selectedSensor == 1) ? "LDR (Luce)" : "NTC (Temperatura)");
+    	  printf("\r\n[EVENT] Left Button Pressed! Selected sensor: %s\r\n",
+    			  (selectedSensor == 1) ? "LDR (Light)" : "NTC (Temperature)");
 
-    	  // Un piccolo delay per il debounce meccanico
+    	  // Delay for mechanical debounce
     	  osDelay(50);
       }
 
-      // 3. Aggiorniamo lo stato precedente per il prossimo ciclo
+      // Update previous state
       last_button_state = current_button_state;
 
-      // 4. Gestione Pulsante Destro (Reset Allarme)
+      // Handle right button (Alarm Reset)
       GPIO_PinState current_state_right = HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin);
       if (last_state_right == GPIO_PIN_SET && current_state_right == GPIO_PIN_RESET) {
           button_pressed_right = true;
@@ -584,16 +573,14 @@ void StartTask_HW(void *argument)
       }
       last_state_right = current_state_right;
 
-      // --- 5. COMANDO FISICO BUZZER ---
+      // Update buzzer state
       if (alarm_triggered) {
     	  HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
       }
 
-
-      // 5. Affichage sur le port série (PuTTY
+      // Output values to serial port
       printf("LDR: %d%% | NTC: %d C | POT: %d \r\n", (int) sensor_ldr.valor, (int) sensor_ntc.valor,(int) (pot_value*100));
 
-      // 6. Pause de la tâche de 50 millisecondes
       osDelay(50);
   }
   /* USER CODE END StartTask_HW */
@@ -624,8 +611,7 @@ void StartTask_Render(void *argument)
 		osMutexRelease(sensorMutex);
 		nb_leds = clamp(nb_leds,0,7);
 		led_alarm = clamp(led_alarm,0,7);
-		//printf("nb_leds %d, led_alarm  %d \n",nb_leds,led_alarm);
-		render_leds(nb_leds,led_alarm,last_blinking);
+		render_leds(nb_leds,led_alarm,&last_blinking);
 
 	}
 	else {
@@ -635,7 +621,7 @@ void StartTask_Render(void *argument)
 		osMutexRelease(sensorMutex);
 		nb_leds = clamp(nb_leds,0,7);
 		led_alarm = clamp(led_alarm,0,7);
-		render_leds(nb_leds,led_alarm,last_blinking);
+		render_leds(nb_leds,led_alarm,&last_blinking);
 	}
 
 	if (led_alarm <= nb_leds && (osKernelGetTickCount() - alarm_off_timestamp) >= 5000 ){
@@ -687,7 +673,7 @@ void Error_Handler(void)
 #ifdef  USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
+  * where the assert_param error has occurred.
   * @param  file: pointer to the source file name
   * @param  line: assert_param error line source number
   * @retval None
