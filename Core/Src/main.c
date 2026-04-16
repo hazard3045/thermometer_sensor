@@ -93,6 +93,10 @@ float pot_value = 0.0f;
 bool alarm_triggered = false;
 
 
+float last_pot_position_ntc ;
+float last_pot_position_ldr ;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -160,6 +164,15 @@ int clamp(int value, int min, int max){
 		return min;
 	}
 	return value;
+}
+
+float absf(float a){
+	if (a>0){
+		return a;
+	}
+	else {
+		return -a;
+	}
 }
 
 
@@ -520,14 +533,21 @@ void StartTask_HW(void *argument)
           }
       }
 
-      sensor_ldr.valor = (ldr_raw / 4095.0f) * 100.0f; // %
+      sensor_ldr.valor = 100.0 - (ldr_raw / 4095.0f) * 100.0f; // %
 
-      pot_value = (float)pot_raw / 4095.0f; // Normalize to 0.0 - 1.0
+      pot_value = 1.0f -  (float)pot_raw / 4095.0f; // Normalize to 0.0 - 1.0
 
-      if (selectedSensor == 0)
-        sensor_ntc.nivel_alarma = (int) (pot_value*8);
-      else
-        sensor_ldr.nivel_alarma = (int) (pot_value*8);
+	  if (selectedSensor == 0){
+		   if(absf(pot_value - last_pot_position_ntc) > 0.05){
+			   sensor_ntc.nivel_alarma = (int) (pot_value*8);
+		   }
+	  }
+	  else{
+		   if(absf(pot_value - last_pot_position_ldr) > 0.05){
+			   sensor_ldr.nivel_alarma = (int) (pot_value*8);
+		   }
+	  }
+
       osMutexRelease(sensorMutex);
 
       // Read current left pin state
@@ -538,8 +558,10 @@ void StartTask_HW(void *argument)
 
     	  if (selectedSensor == 0) {
     		  selectedSensor = 1; // Switch to NTC
+        	  last_pot_position_ldr = pot_value;
     	  } else {
     		  selectedSensor = 0; // Switch back to LDR
+        	  last_pot_position_ntc = pot_value;
     	  }
 
     	  button_pressed_left = true;
@@ -599,7 +621,7 @@ void StartTask_Render(void *argument)
 	if (selectedSensor == 0){
 		osMutexAcquire(sensorMutex, osWaitForever);
 		nb_leds = (int) ((sensor_ntc.valor-sensor_ntc.minimo)/(sensor_ntc.maximo - sensor_ntc.minimo)*8);
-		led_alarm = sensor_ntc.nivel_alarma;
+		led_alarm = (int) sensor_ntc.nivel_alarma;
 		osMutexRelease(sensorMutex);
 		nb_leds = clamp(nb_leds,0,7);
 		led_alarm = clamp(led_alarm,0,7);
