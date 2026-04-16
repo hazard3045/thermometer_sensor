@@ -126,20 +126,12 @@ void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
 	sensor_ldr->minimo = 0.0;
 	sensor_ldr->maximo = 100.0;
 	sensor_ldr->nivel_alarma = 7;
-	sensor_ldr->activated = 0;
-	sensor_ldr->time_activation = 0;
-	sensor_ldr->value_flashing = 0;
-	sensor_ldr->flashing_last_time_activation = 0;
 
 	// Configure the NTC sensor (20°C to 35°C)
 	sensor_ntc->valor = 0.0;
 	sensor_ntc->minimo = 20.;
 	sensor_ntc->maximo = 35.0;
 	sensor_ntc->nivel_alarma = 7;
-	sensor_ntc->activated = 0;
-	sensor_ntc->time_activation = 0;
-	sensor_ntc->value_flashing = 0;
-	sensor_ntc->flashing_last_time_activation = 0;
 
 }
 
