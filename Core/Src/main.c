@@ -127,7 +127,7 @@ int _write(int file, char *ptr, int len){
 void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
 	// Configure the LDR sensor (0% to 100%)
 	sensor_ldr->valor = 0.0;
-	sensor_ldr->minimo = 0.0;
+	sensor_ldr->minimo = 20.0;
 	sensor_ldr->maximo = 100.0;
 	sensor_ldr->nivel_alarma = 7;
 
@@ -533,7 +533,7 @@ void StartTask_HW(void *argument)
           }
       }
 
-      sensor_ldr.valor = 100.0 - (ldr_raw / 4095.0f) * 100.0f; // %
+      sensor_ldr.valor = sensor_ldr.maximo - (ldr_raw / 4095.0f) * 100.0f; // %
 
       pot_value = 1.0f -  (float)pot_raw / 4095.0f; // Normalize to 0.0 - 1.0
 
