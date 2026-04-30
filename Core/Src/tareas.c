@@ -33,8 +33,8 @@ void CONFIGURACION_INICIAL(void){
  		}
 
  	Task_EJER3_init();
-// 	Task_TIME_init();
-// 	Task_COMM_init();
+  	Task_TIME_init();
+  	Task_COMM_init();
 
 }
 

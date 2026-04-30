@@ -36,5 +36,14 @@ void Task_EJER3( void *pvParameters ){
 	while (1) {
 		global_ejer3_it++;
 		//ALUMNO Rellenar Ejercicio 3
+		// Déclaration d'un compteur avant la boucle
+		static int compteur = 0;
+
+		// Dans la boucle infinie :
+		bprintf(PPB_PRJ " at " __TIME__ "\r\n"); // Affiche le nom du projet et l'heure de compilation
+		bprintf("Survival count : %d\r\n", compteur);
+		compteur++;
+
+		osDelay(10000); // Pause de 10 secondes (ou vTaskDelay(10000 / portTICK_RATE_MS))
 	}
 }

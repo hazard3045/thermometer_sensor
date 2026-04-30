@@ -219,6 +219,9 @@ void WIFI_Boot(void)
 
 	// EJERCICIO 4.
 
+	// Envoi de la commande de connexion au routeur
+	HAL_UART_Transmit(&huart1, (unsigned char *)"AT+CWJAP=\"routerSEU\",\"00000000\"\r\n", 33, 10000);
+
 	vTaskDelay(5000/portTICK_RATE_MS );
 	HAL_UART_DMAStop(&huart1);
 	bprintf("Initialized.\r\n");

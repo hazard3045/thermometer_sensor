@@ -256,7 +256,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_EVENTS */
   init_sensores(&sensor_ldr, &sensor_ntc);
-  //CONFIGURACION_INICIAL();
+  CONFIGURACION_INICIAL();
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
@@ -637,8 +637,8 @@ void StartTask_HW(void *argument)
 
     	  button_pressed_left = true;
 
-    	  printf("\r\n[EVENT] Left Button Pressed! Selected sensor: %s\r\n",
-    			  (selectedSensor == 1) ? "LDR (Light)" : "NTC (Temperature)");
+    	  //printf("\r\n[EVENT] Left Button Pressed! Selected sensor: %s\r\n",
+    		//	  (selectedSensor == 1) ? "LDR (Light)" : "NTC (Temperature)");
 
     	  // Delay for mechanical debounce
     	  osDelay(50);
@@ -652,7 +652,7 @@ void StartTask_HW(void *argument)
       if (last_state_right == GPIO_PIN_SET && current_state_right == GPIO_PIN_RESET) {
           button_pressed_right = true;
           alarm_off_timestamp = osKernelGetTickCount();
-          printf("\r\n[RESET] Alarm silenced.\r\n");
+          //printf("\r\n[RESET] Alarm silenced.\r\n");
           HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
           alarm_triggered = 0;
       }
@@ -664,7 +664,7 @@ void StartTask_HW(void *argument)
       }
 
       // Output values to serial port
-      printf("LDR: %d%% | NTC: %d C | POT: %d \r\n", (int) sensor_ldr.valor, (int) sensor_ntc.valor,(int) (pot_value*100));
+      //printf("LDR: %d%% | NTC: %d C | POT: %d \r\n", (int) sensor_ldr.valor, (int) sensor_ntc.valor,(int) (pot_value*100));
 
       osDelay(50);
   }
