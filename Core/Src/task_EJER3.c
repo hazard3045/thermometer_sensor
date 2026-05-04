@@ -7,6 +7,8 @@
 #include "tareas.h"
 #include <string.h>
 #include <task.h>
+#include <time.h>        // Per struct tm e time_t
+#include "task_TIME.h"   // Per le funzioni dell'orologio
 
 #include "task_CONSOLE.h"
 #include "main.h"
@@ -28,22 +30,32 @@ void Task_EJER3_init(void){
 }
 
 void Task_EJER3( void *pvParameters ){
+    static int compteur = 0;
+    time_t raw_time;
+    struct tm *time_info;
 
-	int signal;
+    while (1) {
+        // Incrementa il contatore globale e locale
+        global_ejer3_it++;
+        compteur++;
 
-	//ALUMNO Rellenar Ejercicio 3
+        // Stampa identificazione progetto
+        bprintf("\r\n--- %s (Build: %s) ---\r\n", PPB_PRJ, __TIME__);
+        bprintf("Survival count: %d\r\n", compteur);
 
-	while (1) {
-		global_ejer3_it++;
-		//ALUMNO Rellenar Ejercicio 3
-		// Déclaration d'un compteur avant la boucle
-		static int compteur = 0;
+        // CONTROLLO ORA REALE (Esercizio 5.2)
+        if (task_TIME_timeAvailable()) { // Se il WiFi ha sincronizzato l'ora
+            raw_time = task_TIME_getTime(); // Ottiene i secondi Epoch[cite: 1]
+            time_info = localtime(&raw_time); // Converte in ore/minuti/secondi[cite: 1]
 
-		// Dans la boucle infinie :
-		bprintf(PPB_PRJ " at " __TIME__ "\r\n"); // Affiche le nom du projet et l'heure de compilation
-		bprintf("Survival count : %d\r\n", compteur);
-		compteur++;
+            // Stampa l'ora formattata
+            bprintf("Ora attuale (Valencia): %02d:%02d:%02d\r\n",
+                    time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
+        } else {
+            bprintf("Ora non ancora disponibile (Sincronizzazione WiFi in corso...)\r\n");
+        }
 
-		osDelay(10000); // Pause de 10 secondes (ou vTaskDelay(10000 / portTICK_RATE_MS))
-	}
+        // Attesa di 10 secondi come richiesto[cite: 1]
+        vTaskDelay(10000 / portTICK_RATE_MS);
+    }
 }

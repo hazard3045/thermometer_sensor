@@ -96,6 +96,7 @@ struct sensor_t sensor_ntc;
 float pot_value = 0.0f;
 bool alarm_triggered = false;
 
+int g_mode = 0; // 0: Normal, 1: Clone, 2: Test
 
 float last_pot_position_ntc ;
 float last_pot_position_ldr ;
@@ -568,6 +569,10 @@ void StartTask_HW(void *argument)
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
 
+  // NUOVE VARIABILI PER G_MODE
+  static uint32_t t_both_pressed = 0;
+  static bool mode_locked = false;
+
   /* Infinite loop */
   for(;;)
   {
@@ -620,6 +625,29 @@ void StartTask_HW(void *argument)
 	  }
 
       osMutexRelease(sensorMutex);
+
+      // --- LOGICA G_MODE (Premere entrambi per 2 secondi) ---
+            bool left_is_down = (HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin) == GPIO_PIN_RESET);
+            bool right_is_down = (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET);
+
+            if (left_is_down && right_is_down) {
+                if (t_both_pressed == 0) {
+                    t_both_pressed = osKernelGetTickCount(); // Inizia a contare
+                }
+
+                // Se passano 2 secondi e non abbiamo ancora cambiato modo in questa pressione
+                if (!mode_locked && (osKernelGetTickCount() - t_both_pressed >= 2000)) {
+                    g_mode = (g_mode + 1) % 3; // Cicla tra 0, 1, 2
+                    mode_locked = true;        // Evita incrementi multipli finché non si rilasciano i tasti
+
+                    // Segnale di debug (opzionale)
+                    printf("\r\n[MODE] Cambiato a: %d\r\n", g_mode);
+                }
+            } else {
+                // Reset se almeno uno dei due viene rilasciato
+                t_both_pressed = 0;
+                mode_locked = false;
+            }
 
       // Read current left pin state
       GPIO_PinState current_button_state = HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin);

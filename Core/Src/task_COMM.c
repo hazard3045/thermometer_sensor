@@ -198,7 +198,7 @@ void WIFI_Boot(void)
  	for (ct=0;ct<2048;ct++) buff_recv[ct]=0;
  	HAL_UART_Receive_DMA(&huart1, buff_recv,2048);
  	//HAL_UART_Transmit(&huart1, ( unsigned char *)"AT\r\n",strlen("AT\r\n"),10000);
- 	HAL_UART_Transmit(&huart1, (unsigned char *)"AT+CWJAP_CUR=\"routerSEU\",\"00000000\"\r\n", 37, 10000);
+ 	HAL_UART_Transmit(&huart1, (unsigned char *)"AT+CWJAP_CUR=\"iPhone\",\"Chiara03\"\r\n", strlen("AT+CWJAP_CUR=\"iPhone\",\"Chiara03\"\r\n"), 10000);
 
 
 	 vTaskDelay(100/portTICK_RATE_MS );
@@ -223,7 +223,7 @@ void WIFI_Boot(void)
 
 	// Envoi de la commande de connexion au routeur
 	bprintf("sending request\n");
-	HAL_UART_Transmit(&huart1, (unsigned char *)"AT+CWJAP=\"routerSEU\",\"00000000\"\r\n", 33, 10000);
+	HAL_UART_Transmit(&huart1, (unsigned char *)"AT+CWJAP=\"iPhone\",\"Chiara03\"\r\n", strlen("AT+CWJAP_CUR=\"iPhone\",\"Chiara03\"\r\n"), 10000);
 
 	vTaskDelay(5000/portTICK_RATE_MS );
 	HAL_UART_DMAStop(&huart1);
