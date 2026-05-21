@@ -137,12 +137,16 @@ void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
 	sensor_ldr->minimo = 20.0;
 	sensor_ldr->maximo = 100.0;
 	sensor_ldr->nivel_alarma = 7;
+	sensor_ldr->record_min=999.0;
+	sensor_ldr->record_max=-999.0;
 
 	// Configure the NTC sensor (20°C to 35°C)
 	sensor_ntc->valor = 0.0;
 	sensor_ntc->minimo = 20.;
 	sensor_ntc->maximo = 35.0;
 	sensor_ntc->nivel_alarma = 7;
+	sensor_ntc->record_min=999.0;
+	sensor_ntc->record_max=-999.0;
 
 }
 
@@ -607,9 +611,23 @@ void StartTask_HW(void *argument)
           if (r_ntc > 0.0f) {
               sensor_ntc.valor = BETA / (log(r_ntc / R25) + BETA / T25) - 273.15f;
           }
+          if (sensor_ntc.valor>sensor_ntc.record_max){
+         	  sensor_ntc.record_max=sensor_ntc.valor;
+          }
+          else if (sensor_ntc.valor<sensor_ntc.record_min){
+        	  sensor_ntc.record_min=sensor_ntc.valor;
+          }
       }
 
       sensor_ldr.valor = sensor_ldr.maximo - (ldr_raw / 4095.0f) * 100.0f; // %
+      if (sensor_ldr.valor>sensor_ldr.record_max){
+    	  sensor_ldr.record_max=sensor_ldr.valor;
+      }
+      else if (sensor_ldr.valor<sensor_ldr.record_min){
+       	  sensor_ldr.record_min=sensor_ldr.valor;
+      }
+
+
 
       pot_value = 1.0f -  (float)pot_raw / 4095.0f; // Normalize to 0.0 - 1.0
 

@@ -16,6 +16,8 @@ struct sensor_t {
 	float minimo;
 	float maximo;
 	int nivel_alarma;
+	float record_max;
+	float record_min;
 };
 
 #endif /* INC_SENSORS_H_ */
