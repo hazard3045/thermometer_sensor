@@ -70,15 +70,15 @@ const osThreadAttr_t defaultTask_attributes = {
 osThreadId_t Task_HWHandle;
 const osThreadAttr_t Task_HW_attributes = {
   .name = "Task_HW",
-  .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityLow,
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for myTask_Render */
 osThreadId_t myTask_RenderHandle;
 const osThreadAttr_t myTask_Render_attributes = {
   .name = "myTask_Render",
-  .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityLow,
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
 bool button_pressed_left = false; // False for off and true for on, set to true in inputs tasks and off in the outputs tasks
@@ -97,6 +97,7 @@ float pot_value = 0.0f;
 bool alarm_triggered = false;
 
 int g_mode = 0; // 0: Normal, 1: Clone, 2: Test
+int clone_target_id;
 
 float last_pot_position_ntc ;
 float last_pot_position_ldr ;
@@ -147,20 +148,24 @@ void init_sensores(struct sensor_t *sensor_ldr, struct sensor_t * sensor_ntc){
 }
 
 void render_leds(int number_leds, int led_alarm,long int * last_blink){
-	for (int i =0;i<8;i++){
-		if (i != led_alarm){
-			if (i<number_leds){
-				HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_SET);
-			}
-			else {
-				HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_RESET);
-			}
-		}
-	}
-	if(xTaskGetTickCount()- *last_blink > 200){
-		*last_blink = xTaskGetTickCount();
-		HAL_GPIO_TogglePin(leds_ports[led_alarm], leds[led_alarm]);
-	}
+  for (int i =0;i<8;i++){
+    if (i != led_alarm){
+      if (i<number_leds){
+        HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_SET);
+      }
+      else {
+        HAL_GPIO_WritePin(leds_ports[i], leds[i], GPIO_PIN_RESET);
+      }
+    }
+  }
+
+  // PROTEZIONE AGGIUNTA: Il LED lampeggia solo se l'indice è valido (da 0 a 7)
+  if (led_alarm >= 0 && led_alarm < 8) {
+    if(xTaskGetTickCount()- *last_blink > 200){
+      *last_blink = xTaskGetTickCount();
+      HAL_GPIO_TogglePin(leds_ports[led_alarm], leds[led_alarm]);
+    }
+  }
 }
 
 int clamp(int value, int min, int max){
@@ -558,6 +563,7 @@ void StartDefaultTask(void *argument)
 * @retval None
 */
 /* USER CODE END Header_StartTask_HW */
+/* USER CODE END Header_StartTask_HW */
 void StartTask_HW(void *argument)
 {
   /* USER CODE BEGIN StartTask_HW */
@@ -569,7 +575,7 @@ void StartTask_HW(void *argument)
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
 
-  // NUOVE VARIABILI PER G_MODE
+  // Variables to manage g_mode switching logic securely
   static uint32_t t_both_pressed = 0;
   static bool mode_locked = false;
 
@@ -597,6 +603,7 @@ void StartTask_HW(void *argument)
       HAL_ADC_PollForConversion(&hadc1, 10000);
       uint32_t ntc_raw = HAL_ADC_GetValue(&hadc1);
 
+      // Guard shared sensor structure data using the designated Mutex
       osMutexAcquire(sensorMutex, osWaitForever);
 
       // Protection against extreme ADC values (0 and 4095)
@@ -613,43 +620,57 @@ void StartTask_HW(void *argument)
 
       pot_value = 1.0f -  (float)pot_raw / 4095.0f; // Normalize to 0.0 - 1.0
 
-	  if (selectedSensor == 0){
-		   if(absf(pot_value - last_pot_position_ntc) > 0.05){
-			   sensor_ntc.nivel_alarma = (int) (pot_value*8);
-		   }
-	  }
-	  else{
-		   if(absf(pot_value - last_pot_position_ldr) > 0.05){
-			   sensor_ldr.nivel_alarma = (int) (pot_value*8);
-		   }
-	  }
+      if (g_mode == 1) {
+          // CLONE MODE: Map potentiometer to calculate the target board ID (0 to 26)
+          // Extern variable clone_target_id must be defined in your global variables
+          clone_target_id = (int)((pot_value * 26) );
+          printf("\r\n[REQUEST] Value request by the user : %d\r\n", clone_target_id);
+      }
+      else {
+          // NORMAL / TEST MODE: Update local alarm thresholds as requested
+          if (selectedSensor == 0){
+               if(absf(pot_value - last_pot_position_ntc) > 0.05){
+                   sensor_ntc.nivel_alarma = (int) (pot_value*8);
+               }
+          }
+          else{
+               if(absf(pot_value - last_pot_position_ldr) > 0.05){
+                   sensor_ldr.nivel_alarma = (int) (pot_value*8);
+               }
+          }
+      }
 
       osMutexRelease(sensorMutex);
 
-      // --- LOGICA G_MODE (Premere entrambi per 2 secondi) ---
-            bool left_is_down = (HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin) == GPIO_PIN_RESET);
-            bool right_is_down = (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET);
+      // --- SYSTEM OPERATIONAL MODE LOGIC (g_mode state machine switching) ---
+      bool left_is_down = (HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin) == GPIO_PIN_RESET);
+      bool right_is_down = (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET);
 
-            if (left_is_down && right_is_down) {
-                if (t_both_pressed == 0) {
-                    t_both_pressed = osKernelGetTickCount(); // Inizia a contare
-                }
+      if (left_is_down && right_is_down) {
+          if (t_both_pressed == 0) {
+              t_both_pressed = osKernelGetTickCount(); // Start counting the ticks
+          }
 
-                // Se passano 2 secondi e non abbiamo ancora cambiato modo in questa pressione
-                if (!mode_locked && (osKernelGetTickCount() - t_both_pressed >= 2000)) {
-                    g_mode = (g_mode + 1) % 3; // Cicla tra 0, 1, 2
-                    mode_locked = true;        // Evita incrementi multipli finché non si rilasciano i tasti
+          // Trigger change only if buttons are held down for more than 2 seconds continuously
+          if (!mode_locked && (osKernelGetTickCount() - t_both_pressed >= 2000)) {
 
-                    // Segnale di debug (opzionale)
-                    printf("\r\n[MODE] Cambiato a: %d\r\n", g_mode);
-                }
-            } else {
-                // Reset se almeno uno dei due viene rilasciato
-                t_both_pressed = 0;
-                mode_locked = false;
-            }
+              // SECURE WRITE LOCK: Safely acquire mutex before writing to shared g_mode variable
+              osMutexAcquire(sensorMutex, osWaitForever);
+              g_mode = (g_mode + 1) % 3; // Cycle smoothly between 0, 1, 2
+              osMutexRelease(sensorMutex);
 
-      // Read current left pin state
+              mode_locked = true;        // Prevent multiple fires during the current long press
+
+              // Debug signaling print
+              printf("\r\n[MODE] System operational mode changed to: %d\r\n", g_mode);
+          }
+      } else {
+          // Reset status variables if at least one of the two buttons gets released
+          t_both_pressed = 0;
+          mode_locked = false;
+      }
+
+      // --- LEFT BUTTON HANDLING (Sensor Toggle Selection) ---
       GPIO_PinState current_button_state = HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin);
 
       // Detect falling edge (button press)
@@ -665,40 +686,78 @@ void StartTask_HW(void *argument)
 
     	  button_pressed_left = true;
 
-    	  //printf("\r\n[EVENT] Left Button Pressed! Selected sensor: %s\r\n",
-    		//	  (selectedSensor == 1) ? "LDR (Light)" : "NTC (Temperature)");
-
-    	  // Delay for mechanical debounce
+    	  // Delay for mechanical hardware debounce
     	  osDelay(50);
       }
 
       // Update previous state
       last_button_state = current_button_state;
 
-      // Handle right button (Alarm Reset)
+      // --- RIGHT BUTTON HANDLING (Local Alarm Reset) ---
       GPIO_PinState current_state_right = HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin);
       if (last_state_right == GPIO_PIN_SET && current_state_right == GPIO_PIN_RESET) {
           button_pressed_right = true;
           alarm_off_timestamp = osKernelGetTickCount();
-          //printf("\r\n[RESET] Alarm silenced.\r\n");
+
           HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
           alarm_triggered = 0;
       }
       last_state_right = current_state_right;
 
-      // Update buzzer state
+      //nuovo
+            // --- GESTIONE BUZZER (TUTTE LE MODALITÀ) ---
+                  static uint32_t t_buzzer_test = 0;
+
+                  if (g_mode == 2) {
+                      // Buzzer per Modo Test (BIP di 100ms ogni secondo)
+                      if (osKernelGetTickCount() - t_buzzer_test < 100) {
+                          HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
+                      } else {
+                          HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
+                      }
+                      if (osKernelGetTickCount() - t_buzzer_test >= 1000) {
+                          t_buzzer_test = osKernelGetTickCount();
+                      }
+                  }
+                  else if (alarm_triggered) {
+                      // Buzzer per allarme in Modo 0 o 1
+                      HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
+                  }
+                  else {
+                      // Spegnimento sicuro se non ci sono allarmi
+                      HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
+                  }
+
+                  // --- STAMPA DIAGNOSTICA IN MODO TEST (Ogni 2 secondi) ---
+                  static uint32_t t_stampa_test = 0;
+
+                  if (g_mode == 2 && (osKernelGetTickCount() - t_stampa_test >= 2000)) {
+                      t_stampa_test = osKernelGetTickCount();
+
+                      // Lettura sicura dei sensori (usando il Mutex per evitare crash)
+                      float temp_ntc, temp_ldr;
+                      osMutexAcquire(sensorMutex, osWaitForever);
+                      temp_ntc = sensor_ntc.valor;
+                      temp_ldr = sensor_ldr.valor;
+                      osMutexRelease(sensorMutex);
+
+                      // NOTA: Usiamo bprintf! È essenziale per non bloccare la UART.
+                      bprintf("\r\n--- MODO TEST ---\r\n");
+                      bprintf("Sensori -> NTC: %d C | LDR: %d%% | POT: %d\r\n",
+                             (int)temp_ntc, (int)temp_ldr, (int)(pot_value * 100));
+                      bprintf("Pulsanti -> SINISTRO: %d | DESTRO: %d\r\n",
+                             left_is_down, right_is_down);
+                  }
+
+      // --- LOCAL BUZZER STATE MANAGER ---
       if (alarm_triggered) {
     	  HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
       }
 
-      // Output values to serial port
-      //printf("LDR: %d%% | NTC: %d C | POT: %d \r\n", (int) sensor_ldr.valor, (int) sensor_ntc.valor,(int) (pot_value*100));
-
-      osDelay(50);
+      osDelay(50); // Deterministic execution pause
   }
   /* USER CODE END StartTask_HW */
 }
-
 /* USER CODE BEGIN Header_StartTask_Render */
 /**
 * @brief Function implementing the myTask_Render thread.
@@ -709,38 +768,66 @@ void StartTask_HW(void *argument)
 void StartTask_Render(void *argument)
 {
   /* USER CODE BEGIN StartTask_Render */
+  long int last_blinking = 0;
+  int nb_leds = 0;
+  int led_alarm = 0;
 
-	long int last_blinking =0;
-	int nb_leds = 0;
-	int led_alarm = 0;
+  // Variabili per l'animazione LED in Modo 2
+  static uint32_t t_leds = 0;
+  static int led_sequenza = 0;
 
   /* Infinite loop */
   for(;;)
   {
-	if (selectedSensor == 0){
-		osMutexAcquire(sensorMutex, osWaitForever);
-		nb_leds = (int) ((sensor_ntc.valor-sensor_ntc.minimo)/(sensor_ntc.maximo - sensor_ntc.minimo)*8);
-		led_alarm = (int) sensor_ntc.nivel_alarma;
-		osMutexRelease(sensorMutex);
-		nb_leds = clamp(nb_leds,0,7);
-		led_alarm = clamp(led_alarm,0,7);
-		render_leds(nb_leds,led_alarm,&last_blinking);
+    // --- 1. SE SIAMO IN MODO TEST (G_MODE == 2) ---
+    if (g_mode == 2)
+    {
+        // Barrido dei LED (avanza ogni 150ms)
+        if (osKernelGetTickCount() - t_leds >= 150) {
+            t_leds = osKernelGetTickCount();
+            led_sequenza = (led_sequenza + 1) % 8;
+        }
+        // Ora passare 9 è totalmente sicuro grazie alla protezione in render_leds!
+        render_leds(led_sequenza + 1, 9, &last_blinking);
+        osDelay(20);
+        continue; // Ricomincia il ciclo senza leggere i sensori
+    }
 
-	}
-	else {
-		osMutexAcquire(sensorMutex, osWaitForever);
-		nb_leds = (int) ((sensor_ldr.valor-sensor_ldr.minimo)/(sensor_ldr.maximo - sensor_ldr.minimo)*8);
-		led_alarm = (int) sensor_ldr.nivel_alarma;
-		osMutexRelease(sensorMutex);
-		nb_leds = clamp(nb_leds,0,7);
-		led_alarm = clamp(led_alarm,0,7);
-		render_leds(nb_leds,led_alarm,&last_blinking);
-	}
+    // --- 2. MOSTRA LA MODALITÀ (Pulsante destro premuto e allarme spento) ---
+        // Aggiungiamo un ritardo di 500ms dal momento dello spegnimento per dare il tempo di alzare il dito
+        if (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET &&
+            !alarm_triggered &&
+            (osKernelGetTickCount() - alarm_off_timestamp) > 500) {
 
-	if (led_alarm <= nb_leds && (osKernelGetTickCount() - alarm_off_timestamp) >= 5000 ){
-		alarm_triggered = 1;
-	};
+            int led_del_modo = g_mode + 1; // Modo 0 -> accende 1 LED, Modo 1 -> accende 2 LED
+            render_leds(led_del_modo, 9, &last_blinking);
+            osDelay(20);
+            continue;
+        }
 
+    // --- 3. LOGICA NORMALE (G_MODE 0 e 1) ---
+    if (selectedSensor == 0){
+        osMutexAcquire(sensorMutex, osWaitForever);
+        nb_leds = (int) ((sensor_ntc.valor-sensor_ntc.minimo)/(sensor_ntc.maximo - sensor_ntc.minimo)*8);
+        led_alarm = (int) sensor_ntc.nivel_alarma;
+        osMutexRelease(sensorMutex);
+        nb_leds = clamp(nb_leds,0,7);
+        led_alarm = clamp(led_alarm,0,7);
+        render_leds(nb_leds,led_alarm,&last_blinking);
+    }
+    else {
+        osMutexAcquire(sensorMutex, osWaitForever);
+        nb_leds = (int) ((sensor_ldr.valor-sensor_ldr.minimo)/(sensor_ldr.maximo - sensor_ldr.minimo)*8);
+        led_alarm = (int) sensor_ldr.nivel_alarma;
+        osMutexRelease(sensorMutex);
+        nb_leds = clamp(nb_leds,0,7);
+        led_alarm = clamp(led_alarm,0,7);
+        render_leds(nb_leds,led_alarm,&last_blinking);
+    }
+
+    if (led_alarm <= nb_leds && (osKernelGetTickCount() - alarm_off_timestamp) >= 5000 ){
+        alarm_triggered = 1;
+    }
 
     osDelay(20);
   }
