@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "sensors.h"
+#include "task_ORION.h"
 #include "stdio.h"
 #include "math.h"
 #include <tareas.h>
@@ -81,10 +82,10 @@ const osThreadAttr_t myTask_Render_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
-bool button_pressed_left = false; // False for off and true for on, set to true in inputs tasks and off in the outputs tasks
+bool button_pressed_left = false;
 bool button_pressed_right = false;
 int selectedSensor;
-uint32_t alarm_off_timestamp = 0; // Stores the timestamp when the alarm was manually disabled
+uint32_t alarm_off_timestamp = 0;
 
 
 uint16_t leds[] = {LED1_Pin,LED2_Pin,LED3_Pin,LED4_Pin,LED5_Pin,LED6_Pin,LED7_Pin,LED8_Pin};
@@ -96,8 +97,12 @@ struct sensor_t sensor_ntc;
 float pot_value = 0.0f;
 bool alarm_triggered = false;
 
+// --- RISOLUZIONE LINKER E HANDSHAKE DI RETE ---
+bool clone_alarm_inhibited = false; // Definizione della variabile reale richiesta da task_ORION.c
+
 int g_mode = 0; // 0: Normal, 1: Clone, 2: Test
 int clone_target_id;
+static int last_clone_id = -1;
 
 float last_pot_position_ntc ;
 float last_pot_position_ldr ;
@@ -159,7 +164,6 @@ void render_leds(int number_leds, int led_alarm,long int * last_blink){
     }
   }
 
-  // PROTEZIONE AGGIUNTA: Il LED lampeggia solo se l'indice è valido (da 0 a 7)
   if (led_alarm >= 0 && led_alarm < 8) {
     if(xTaskGetTickCount()- *last_blink > 200){
       *last_blink = xTaskGetTickCount();
@@ -563,7 +567,6 @@ void StartDefaultTask(void *argument)
 * @retval None
 */
 /* USER CODE END Header_StartTask_HW */
-/* USER CODE END Header_StartTask_HW */
 void StartTask_HW(void *argument)
 {
   /* USER CODE BEGIN StartTask_HW */
@@ -575,9 +578,9 @@ void StartTask_HW(void *argument)
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
 
-  // Variables to manage g_mode switching logic securely
   static uint32_t t_both_pressed = 0;
   static bool mode_locked = false;
+  static int last_clone_id = -1;
 
   /* Infinite loop */
   for(;;)
@@ -603,31 +606,37 @@ void StartTask_HW(void *argument)
       HAL_ADC_PollForConversion(&hadc1, 10000);
       uint32_t ntc_raw = HAL_ADC_GetValue(&hadc1);
 
-      // Guard shared sensor structure data using the designated Mutex
       osMutexAcquire(sensorMutex, osWaitForever);
+
+      if(g_mode == 0){
 
       // Protection against extreme ADC values (0 and 4095)
       if (ntc_raw > 0 && ntc_raw < 4095) {
-          float voltage     = (ntc_raw * 3.3f) / 4095.0f;        // Voltage on the voltage divider [V]
-          float r_ntc       = (10000.0f * voltage) / (3.3f - voltage); // NTC Resistance [Ohm]
+          float voltage     = (ntc_raw * 3.3f) / 4095.0f;
+          float r_ntc       = (10000.0f * voltage) / (3.3f - voltage);
 
           if (r_ntc > 0.0f) {
               sensor_ntc.valor = BETA / (log(r_ntc / R25) + BETA / T25) - 273.15f;
           }
       }
 
-      sensor_ldr.valor = sensor_ldr.maximo - (ldr_raw / 4095.0f) * 100.0f; // %
+      sensor_ldr.valor = sensor_ldr.maximo - (ldr_raw / 4095.0f) * 100.0f;
 
-      pot_value = 1.0f -  (float)pot_raw / 4095.0f; // Normalize to 0.0 - 1.0
+      }
+
+      pot_value = 1.0f -  (float)pot_raw / 4095.0f;
+
+
 
       if (g_mode == 1) {
-          // CLONE MODE: Map potentiometer to calculate the target board ID (0 to 26)
-          // Extern variable clone_target_id must be defined in your global variables
-          clone_target_id = (int)((pot_value * 26) );
-          printf("\r\n[REQUEST] Value request by the user : %d\r\n", clone_target_id);
+			clone_target_id = (int)(pot_value * 26);
+
+			if (clone_target_id != last_clone_id) {
+				bprintf("\r\n[HW] Potenziometro mosso in Modo Clone. Target: SensorSEU_%02d\r\n", clone_target_id);
+				last_clone_id = clone_target_id;
+			}
       }
       else {
-          // NORMAL / TEST MODE: Update local alarm thresholds as requested
           if (selectedSensor == 0){
                if(absf(pot_value - last_pot_position_ntc) > 0.05){
                    sensor_ntc.nivel_alarma = (int) (pot_value*8);
@@ -642,58 +651,50 @@ void StartTask_HW(void *argument)
 
       osMutexRelease(sensorMutex);
 
-      // --- SYSTEM OPERATIONAL MODE LOGIC (g_mode state machine switching) ---
+      // g_mode state machine switching
       bool left_is_down = (HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin) == GPIO_PIN_RESET);
       bool right_is_down = (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET);
 
       if (left_is_down && right_is_down) {
           if (t_both_pressed == 0) {
-              t_both_pressed = osKernelGetTickCount(); // Start counting the ticks
+              t_both_pressed = osKernelGetTickCount();
           }
 
-          // Trigger change only if buttons are held down for more than 2 seconds continuously
           if (!mode_locked && (osKernelGetTickCount() - t_both_pressed >= 2000)) {
-
-              // SECURE WRITE LOCK: Safely acquire mutex before writing to shared g_mode variable
               osMutexAcquire(sensorMutex, osWaitForever);
-              g_mode = (g_mode + 1) % 3; // Cycle smoothly between 0, 1, 2
+              g_mode = (g_mode + 1) % 3;
+              if (g_mode == 0){
+            	  init_sensores(&sensor_ldr, &sensor_ntc);
+              }
               osMutexRelease(sensorMutex);
-
-              mode_locked = true;        // Prevent multiple fires during the current long press
-
-              // Debug signaling print
+              mode_locked = true;
+              printf("\r\n=================================================\r\n");
               printf("\r\n[MODE] System operational mode changed to: %d\r\n", g_mode);
+              printf("\r\n=================================================\r\n");
+
           }
       } else {
-          // Reset status variables if at least one of the two buttons gets released
           t_both_pressed = 0;
           mode_locked = false;
       }
 
-      // --- LEFT BUTTON HANDLING (Sensor Toggle Selection) ---
+      // --- LEFT BUTTON HANDLING ---
       GPIO_PinState current_button_state = HAL_GPIO_ReadPin(BTN_IZQ_GPIO_Port, BTN_IZQ_Pin);
 
-      // Detect falling edge (button press)
       if (last_button_state == GPIO_PIN_SET && current_button_state == GPIO_PIN_RESET) {
-
     	  if (selectedSensor == 0) {
-    		  selectedSensor = 1; // Switch to NTC
+    		  selectedSensor = 1;
         	  last_pot_position_ldr = pot_value;
     	  } else {
-    		  selectedSensor = 0; // Switch back to LDR
+    		  selectedSensor = 0;
         	  last_pot_position_ntc = pot_value;
     	  }
-
     	  button_pressed_left = true;
-
-    	  // Delay for mechanical hardware debounce
     	  osDelay(50);
       }
-
-      // Update previous state
       last_button_state = current_button_state;
 
-      // --- RIGHT BUTTON HANDLING (Local Alarm Reset) ---
+      // --- RIGHT BUTTON HANDLING (RESET LOCALE E INIBIZIONE HANDSHAKE) ---
       GPIO_PinState current_state_right = HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin);
       if (last_state_right == GPIO_PIN_SET && current_state_right == GPIO_PIN_RESET) {
           button_pressed_right = true;
@@ -701,60 +702,57 @@ void StartTask_HW(void *argument)
 
           HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
           alarm_triggered = 0;
+
+          if (g_mode == 1) {
+              osMutexAcquire(sensorMutex, osWaitForever);
+              clone_alarm_inhibited = true; // Attivazione immediata del blocco hardware locale
+              osMutexRelease(sensorMutex);
+
+              ORION_SignalAlarmClear(); // Genera la richiesta asincrona di PATCH per spegnere l'allarme
+          }
       }
       last_state_right = current_state_right;
 
-      //nuovo
-            // --- GESTIONE BUZZER (TUTTE LE MODALITÀ) ---
-                  static uint32_t t_buzzer_test = 0;
+      // --- GESTIONE CENTRALIZZATA BUZZER CON BLOCCO HANDSHAKE ---
+      static uint32_t t_buzzer_test = 0;
 
-                  if (g_mode == 2) {
-                      // Buzzer per Modo Test (BIP di 100ms ogni secondo)
-                      if (osKernelGetTickCount() - t_buzzer_test < 100) {
-                          HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
-                      } else {
-                          HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
-                      }
-                      if (osKernelGetTickCount() - t_buzzer_test >= 1000) {
-                          t_buzzer_test = osKernelGetTickCount();
-                      }
-                  }
-                  else if (alarm_triggered) {
-                      // Buzzer per allarme in Modo 0 o 1
-                      HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
-                  }
-                  else {
-                      // Spegnimento sicuro se non ci sono allarmi
-                      HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
-                  }
-
-                  // --- STAMPA DIAGNOSTICA IN MODO TEST (Ogni 2 secondi) ---
-                  static uint32_t t_stampa_test = 0;
-
-                  if (g_mode == 2 && (osKernelGetTickCount() - t_stampa_test >= 2000)) {
-                      t_stampa_test = osKernelGetTickCount();
-
-                      // Lettura sicura dei sensori (usando il Mutex per evitare crash)
-                      float temp_ntc, temp_ldr;
-                      osMutexAcquire(sensorMutex, osWaitForever);
-                      temp_ntc = sensor_ntc.valor;
-                      temp_ldr = sensor_ldr.valor;
-                      osMutexRelease(sensorMutex);
-
-                      // NOTA: Usiamo bprintf! È essenziale per non bloccare la UART.
-                      bprintf("\r\n--- MODO TEST ---\r\n");
-                      bprintf("Sensori -> NTC: %d C | LDR: %d%% | POT: %d\r\n",
-                             (int)temp_ntc, (int)temp_ldr, (int)(pot_value * 100));
-                      bprintf("Pulsanti -> SINISTRO: %d | DESTRO: %d\r\n",
-                             left_is_down, right_is_down);
-                  }
-
-      // --- LOCAL BUZZER STATE MANAGER ---
-      if (alarm_triggered) {
-    	  HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
+      if (g_mode == 2) {
+          if (osKernelGetTickCount() - t_buzzer_test < 100) {
+              HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
+          } else {
+              HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
+          }
+          if (osKernelGetTickCount() - t_buzzer_test >= 1000) {
+              t_buzzer_test = osKernelGetTickCount();
+          }
+      }
+      else if (alarm_triggered && !clone_alarm_inhibited) { // Il buzzer suona solo se NON inibito dalla transazione
+          HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
+      }
+      else {
+          HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
       }
 
-      osDelay(50); // Deterministic execution pause
+      // --- DIAGNOSTICA MODO TEST ---
+      static uint32_t t_stampa_test = 0;
+
+      if (g_mode == 2 && (osKernelGetTickCount() - t_stampa_test >= 2000)) {
+          t_stampa_test = osKernelGetTickCount();
+
+          float temp_ntc, temp_ldr;
+          osMutexAcquire(sensorMutex, osWaitForever);
+          temp_ntc = sensor_ntc.valor;
+          temp_ldr = sensor_ldr.valor;
+          osMutexRelease(sensorMutex);
+
+          bprintf("\r\n--- MODO TEST ---\r\n");
+          bprintf("Sensori -> NTC: %d C | LDR: %d%% | POT: %d\r\n",
+                 (int)temp_ntc, (int)temp_ldr, (int)(pot_value * 100));
+          bprintf("Pulsanti -> SINISTRO: %d | DESTRO: %d\r\n",
+                 left_is_down, right_is_down);
+      }
+
+      osDelay(50);
   }
   /* USER CODE END StartTask_HW */
 }
@@ -772,40 +770,33 @@ void StartTask_Render(void *argument)
   int nb_leds = 0;
   int led_alarm = 0;
 
-  // Variabili per l'animazione LED in Modo 2
   static uint32_t t_leds = 0;
   static int led_sequenza = 0;
 
   /* Infinite loop */
   for(;;)
   {
-    // --- 1. SE SIAMO IN MODO TEST (G_MODE == 2) ---
     if (g_mode == 2)
     {
-        // Barrido dei LED (avanza ogni 150ms)
         if (osKernelGetTickCount() - t_leds >= 150) {
             t_leds = osKernelGetTickCount();
             led_sequenza = (led_sequenza + 1) % 8;
         }
-        // Ora passare 9 è totalmente sicuro grazie alla protezione in render_leds!
         render_leds(led_sequenza + 1, 9, &last_blinking);
         osDelay(20);
-        continue; // Ricomincia il ciclo senza leggere i sensori
+        continue;
     }
 
-    // --- 2. MOSTRA LA MODALITÀ (Pulsante destro premuto e allarme spento) ---
-        // Aggiungiamo un ritardo di 500ms dal momento dello spegnimento per dare il tempo di alzare il dito
-        if (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET &&
-            !alarm_triggered &&
-            (osKernelGetTickCount() - alarm_off_timestamp) > 500) {
+    if (HAL_GPIO_ReadPin(BTN_DER_GPIO_Port, BTN_DER_Pin) == GPIO_PIN_RESET &&
+        !alarm_triggered &&
+        (osKernelGetTickCount() - alarm_off_timestamp) > 500) {
 
-            int led_del_modo = g_mode + 1; // Modo 0 -> accende 1 LED, Modo 1 -> accende 2 LED
-            render_leds(led_del_modo, 9, &last_blinking);
-            osDelay(20);
-            continue;
-        }
+        int led_del_modo = g_mode + 1;
+        render_leds(led_del_modo, 9, &last_blinking);
+        osDelay(20);
+        continue;
+    }
 
-    // --- 3. LOGICA NORMALE (G_MODE 0 e 1) ---
     if (selectedSensor == 0){
         osMutexAcquire(sensorMutex, osWaitForever);
         nb_leds = (int) ((sensor_ntc.valor-sensor_ntc.minimo)/(sensor_ntc.maximo - sensor_ntc.minimo)*8);
@@ -827,6 +818,7 @@ void StartTask_Render(void *argument)
 
     if (led_alarm <= nb_leds && (osKernelGetTickCount() - alarm_off_timestamp) >= 5000 ){
         alarm_triggered = 1;
+
     }
 
     osDelay(20);
@@ -836,53 +828,27 @@ void StartTask_Render(void *argument)
 
 /**
   * @brief  Period elapsed callback in non blocking mode
-  * @note   This function is called  when TIM1 interrupt took place, inside
-  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
-  * a global variable "uwTick" used as application time base.
-  * @param  htim : TIM handle
-  * @retval None
   */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-  /* USER CODE BEGIN Callback 0 */
-
-  /* USER CODE END Callback 0 */
   if (htim->Instance == TIM1) {
     HAL_IncTick();
   }
-  /* USER CODE BEGIN Callback 1 */
-
-  /* USER CODE END Callback 1 */
 }
 
 /**
   * @brief  This function is executed in case of error occurrence.
-  * @retval None
   */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
 
 #ifdef  USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

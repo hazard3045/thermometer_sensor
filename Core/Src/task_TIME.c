@@ -6,7 +6,6 @@
  */
 
 #include <stdint.h>
-#include "task_COMM.h"
 #include "FreeRTOS.h"
 #include <stdio.h>
 #include "cmsis_os.h"
@@ -15,6 +14,7 @@
 #include "tareas.h"
 #include <string.h>
 #include <task.h>
+#include <task_COMM.h>
 #include "task_CONSOLE.h"
 #include "task_TIME.h"
 #include "cJSON.h"
@@ -55,29 +55,28 @@ void Task_TIME( void *pvParameters ){
 				COMM_request.command=1;
 				COMM_request.result=0;
 
-				// Original university server network parameters
-				COMM_request.dst_port=5000;
-				COMM_request.dst_address=(uint8_t *)"pperez2.disca.upv.es";
-				COMM_request.HTTP_request=(uint8_t *)"GET /tiempo HTTP/1.1\r\n\r\n";
+				COMM_request.dst_port = 5000;
+				strcpy((char *)COMM_request.dst_address, "pperezs-sec.disca.upv.es");
+
+				memset(COMM_request.HTTP_request, 0, sizeof(COMM_request.HTTP_request));
+				strcpy((char *)COMM_request.HTTP_request, "GET /tiempo HTTP/1.1\r\n\r\n");
 
 				signal=0;
-				xSemaphoreGive(COMM_xSem); // Safely exit critical section
+				xSemaphoreGive(COMM_xSem);
 			}
 			else {
-			      xSemaphoreGive(COMM_xSem); // Release mutex immediately if busy
-			      // Increased backoff delay to let Task_ORION negotiate the channel smoothly
+			      xSemaphoreGive(COMM_xSem);
 			      vTaskDelay((500 + (rand()%500)) / portTICK_RATE_MS);
 			}
 
 		} while(signal);
 
-  		// ROBUSTNESS UPDATE: Wait until communication finishes (either 1 for success or -1 for error)
 		while (COMM_request.result == 0) {
 			vTaskDelay(10/portTICK_RATE_MS);
 		}
 
-		// Only parse JSON if the communication cycle returned absolute success (1)
-		if (COMM_request.result == 1 && COMM_request.HTTP_response != NULL) {
+		// Verifica se la chiamata ha avuto successo E se c'è davvero il JSON del tempo
+		if (COMM_request.result == 1 && COMM_request.HTTP_response != NULL && strstr((char *)COMM_request.HTTP_response, "tiempo_actual")) {
 			jsons1 = cJSON_Parse((const char *)COMM_request.HTTP_response);
 			if (jsons1) {
 				name = cJSON_GetObjectItem(jsons1, "tiempo_actual");
@@ -98,25 +97,23 @@ void Task_TIME( void *pvParameters ){
 					time_available=1;
 				}
 				cJSON_Delete(jsons1);
-			} else {
-				bprintf("TIME: JSON Parsing error \r\n");
 			}
 		} else {
-			bprintf("TIME: Network timeout or connection response error \r\n");
+			// In caso di server DOWN abbiamo l'orario di DEFAULT
+			bprintf("TIME: Server down.\r\n");
+			tm_offset = 1772635620;
+			ticks_since_start_ts = xTaskGetTickCount();
+			time_available = 1;
 		}
 
-		// --- CANAL CLEANUP AREA ---
-		// Re-acquire the mutex to clean up shared request variables safely
 		if (xSemaphoreTake(COMM_xSem, portMAX_DELAY) == pdTRUE) {
 			COMM_request.result=0;
-			COMM_request.command=0; // Free the shared structure for Task_ORION
+			COMM_request.command=0;
 			xSemaphoreGive(COMM_xSem);
 		}
 
 		global_time_it++;
 
-		// Forced Yielding Delay: Gives complete structural freedom to Task_ORION
-		// If an error occurred (e.g. server closed), wait 10 seconds instead of hammering the ESP module immediately
 		if (time_available == 1) {
 			vTaskDelay(100000/portTICK_RATE_MS);
 		} else {
